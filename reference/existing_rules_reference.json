@@ -1,0 +1,1179 @@
+[
+  {
+    "ruleId": "SANC-001",
+    "name": "Exact sanctions or watchlist match",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "EXACT"
+    },
+    "title": "Exact sanctions / watchlist match",
+    "explanationTemplate": "Exact match on {attributes.listName} for {attributes.matchedName}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "SANC-002",
+    "name": "Potential sanctions match needs review",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "POTENTIAL"
+    },
+    "title": "Potential sanctions match",
+    "explanationTemplate": "Possible (name-based) match on {attributes.listName} for {attributes.matchedName}. Needs manual disposition to rule out a false positive."
+  },
+  {
+    "ruleId": "SANC-003",
+    "name": "Federal exclusion hit for a healthcare role",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.listName",
+          "op": "in",
+          "value": [
+            "OIG",
+            "LEIE",
+            "SAM"
+          ]
+        },
+        {
+          "field": "attributes.matchType",
+          "op": "eq",
+          "value": "EXACT"
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "HEALTHCARE"
+        }
+      ]
+    },
+    "title": "Federal exclusion hit for a healthcare role",
+    "explanationTemplate": "Exact match on {attributes.listName} for a healthcare role. Excluded individuals generally cannot be employed in federally funded healthcare."
+  },
+  {
+    "ruleId": "SOR-001",
+    "name": "Sex offender registry match",
+    "searchType": "SEX_OFFENDER",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "EXACT"
+    },
+    "title": "Sex offender registry match",
+    "explanationTemplate": "Registry match in {attributes.registryState}, tier {attributes.tier}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "SOR-002",
+    "name": "Possible sex offender registry match",
+    "searchType": "SEX_OFFENDER",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "POTENTIAL"
+    },
+    "modifiers": [
+      {
+        "when": {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "CHILD_FACING"
+        },
+        "effect": "ESCALATE"
+      }
+    ],
+    "title": "Possible sex offender registry match",
+    "explanationTemplate": "Partial (name or date of birth) match in {attributes.registryState}. Needs manual review; escalated for child-facing roles."
+  },
+  {
+    "ruleId": "ID-001",
+    "name": "Identity invalid or synthetic",
+    "searchType": "IDENTITY",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.ssnValid",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.deceasedFlag",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.ssnIssuedBeforeDob",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.multipleIdentitiesFlag",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Identity could not be validated",
+    "explanationTemplate": "SSN trace flagged: valid={attributes.ssnValid}, deceased={attributes.deceasedFlag}, issuedBeforeDob={attributes.ssnIssuedBeforeDob}, multipleIdentities={attributes.multipleIdentitiesFlag}."
+  },
+  {
+    "ruleId": "ID-002",
+    "name": "Name or date of birth mismatch",
+    "searchType": "IDENTITY",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.nameMatch",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.dobMatch",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Identity details do not match",
+    "explanationTemplate": "Candidate-supplied details differ from the source: nameMatch={attributes.nameMatch}, dobMatch={attributes.dobMatch}."
+  },
+  {
+    "ruleId": "CRIM-001",
+    "name": "Felony conviction within lookback period",
+    "searchType": "CRIMINAL",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.severity",
+          "op": "eq",
+          "value": "FELONY"
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "eq",
+          "value": "CONVICTED"
+        },
+        {
+          "field": "attributes.yearsSinceOffence",
+          "op": "lte",
+          "value": "$param.criminalLookbackYears"
+        }
+      ]
+    },
+    "title": "Felony conviction on record",
+    "explanationTemplate": "{attributes.offenceCategory} felony, offence date {attributes.offenceDate}, within the {param.criminalLookbackYears}-year lookback.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-002",
+    "name": "Record found that the candidate did not disclose",
+    "searchType": "CRIMINAL",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "result",
+          "op": "eq",
+          "value": "RECORD_FOUND"
+        },
+        {
+          "field": "attributes.candidateDisclosed",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Undisclosed criminal record",
+    "explanationTemplate": "A {attributes.severity} record ({attributes.offenceCategory}, {attributes.jurisdictionState}) was found but the candidate did not disclose it.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-003",
+    "name": "Misdemeanor within lookback, or pending case",
+    "searchType": "CRIMINAL",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.severity",
+              "op": "eq",
+              "value": "MISDEMEANOR"
+            },
+            {
+              "field": "attributes.disposition",
+              "op": "eq",
+              "value": "CONVICTED"
+            },
+            {
+              "field": "attributes.yearsSinceOffence",
+              "op": "lte",
+              "value": "$param.criminalLookbackYears"
+            }
+          ]
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "eq",
+          "value": "PENDING"
+        }
+      ]
+    },
+    "modifiers": [
+      {
+        "when": {
+          "all": [
+            {
+              "field": "job.roleCategories",
+              "op": "containsAny",
+              "value": [
+                "FINANCE",
+                "CHILD_FACING"
+              ]
+            },
+            {
+              "field": "attributes.offenceCategory",
+              "op": "in",
+              "value": [
+                "FRAUD",
+                "THEFT",
+                "SEXUAL",
+                "VIOLENCE"
+              ]
+            }
+          ]
+        },
+        "effect": "ESCALATE"
+      }
+    ],
+    "title": "Misdemeanor or pending criminal case",
+    "explanationTemplate": "{attributes.severity} ({attributes.offenceCategory}), disposition {attributes.disposition}, {attributes.yearsSinceOffence} years ago. Escalated when the offence is relevant to a finance or child-facing role.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-004",
+    "name": "Older conviction or dismissed case",
+    "searchType": "CRIMINAL",
+    "severity": "LOW",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.disposition",
+              "op": "eq",
+              "value": "CONVICTED"
+            },
+            {
+              "field": "attributes.yearsSinceOffence",
+              "op": "gt",
+              "value": "$param.criminalLookbackYears"
+            }
+          ]
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "in",
+          "value": [
+            "DISMISSED",
+            "ACQUITTED"
+          ]
+        }
+      ]
+    },
+    "title": "Older conviction or dismissed case",
+    "explanationTemplate": "Disposition {attributes.disposition}, {attributes.yearsSinceOffence} years since the offence (lookback {param.criminalLookbackYears} years)."
+  },
+  {
+    "ruleId": "DRUG-001",
+    "name": "Positive or refused drug test on a safety-sensitive or driving role",
+    "searchType": "DRUG_HEALTH",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.result",
+          "op": "in",
+          "value": [
+            "POSITIVE",
+            "REFUSED"
+          ]
+        },
+        {
+          "not": {
+            "field": "attributes.mroStatus",
+            "op": "eq",
+            "value": "VERIFIED_LEGIT"
+          }
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "containsAny",
+          "value": [
+            "SAFETY_SENSITIVE",
+            "DRIVING"
+          ]
+        }
+      ]
+    },
+    "title": "Failed or refused drug test (safety-sensitive role)",
+    "explanationTemplate": "Drug test result {attributes.result}, MRO status {attributes.mroStatus}, for a safety-sensitive or driving role.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "DRUG-002",
+    "name": "Dilute result or MRO review pending",
+    "searchType": "DRUG_HEALTH",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.result",
+          "op": "eq",
+          "value": "DILUTE"
+        },
+        {
+          "field": "attributes.mroStatus",
+          "op": "eq",
+          "value": "PENDING"
+        }
+      ]
+    },
+    "title": "Dilute drug test or MRO review pending",
+    "explanationTemplate": "Result {attributes.result}, MRO status {attributes.mroStatus}."
+  },
+  {
+    "ruleId": "DRUG-003",
+    "name": "Positive or refused drug test (other roles)",
+    "searchType": "DRUG_HEALTH",
+    "severity": "MEDIUM",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.result",
+          "op": "in",
+          "value": [
+            "POSITIVE",
+            "REFUSED"
+          ]
+        },
+        {
+          "not": {
+            "field": "attributes.mroStatus",
+            "op": "eq",
+            "value": "VERIFIED_LEGIT"
+          }
+        },
+        {
+          "not": {
+            "field": "job.roleCategories",
+            "op": "containsAny",
+            "value": [
+              "SAFETY_SENSITIVE",
+              "DRIVING"
+            ]
+          }
+        }
+      ]
+    },
+    "title": "Failed or refused drug test",
+    "explanationTemplate": "Drug test result {attributes.result}, MRO status {attributes.mroStatus}."
+  },
+  {
+    "ruleId": "MVR-001",
+    "name": "Recent DUI or suspended licence on a driving role",
+    "searchType": "MVR",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "any": [
+            {
+              "all": [
+                {
+                  "field": "attributes.duiCount",
+                  "op": "gte",
+                  "value": 1
+                },
+                {
+                  "field": "attributes.yearsSinceLastDui",
+                  "op": "lte",
+                  "value": 5
+                }
+              ]
+            },
+            {
+              "field": "attributes.licenceStatus",
+              "op": "in",
+              "value": [
+                "SUSPENDED",
+                "REVOKED"
+              ]
+            }
+          ]
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "DRIVING"
+        }
+      ]
+    },
+    "title": "DUI or licence suspension (driving role)",
+    "explanationTemplate": "{attributes.duiCount} DUI(s), last one {attributes.yearsSinceLastDui} years ago; licence status {attributes.licenceStatus}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "MVR-002",
+    "name": "High points or repeated moving violations",
+    "searchType": "MVR",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.totalPoints",
+          "op": "gt",
+          "value": "$param.mvrMaxPoints"
+        },
+        {
+          "field": "attributes.violationsLast3y",
+          "op": "gte",
+          "value": 3
+        }
+      ]
+    },
+    "title": "Driving record points or violations above threshold",
+    "explanationTemplate": "{attributes.totalPoints} points (limit {param.mvrMaxPoints}); {attributes.violationsLast3y} moving violations in the last 3 years."
+  },
+  {
+    "ruleId": "MVR-003",
+    "name": "Licence class does not match the role",
+    "domain": "OPERATIONAL",
+    "searchType": "MVR",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.licenceClassMismatch",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "DRIVING"
+        }
+      ]
+    },
+    "title": "Licence class mismatch for a driving role",
+    "explanationTemplate": "Candidate holds class {attributes.licenceClass}, which does not meet the requirement of the role."
+  },
+  {
+    "ruleId": "WA-001",
+    "name": "E-Verify final non-confirmation or expired authorization",
+    "searchType": "WORK_AUTH_I9",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.everifyStatus",
+          "op": "eq",
+          "value": "FNC"
+        },
+        {
+          "field": "attributes.authStatus",
+          "op": "eq",
+          "value": "EXPIRED"
+        }
+      ]
+    },
+    "title": "Work authorization not confirmed or expired",
+    "explanationTemplate": "E-Verify status {attributes.everifyStatus}; authorization status {attributes.authStatus}."
+  },
+  {
+    "ruleId": "WA-002",
+    "name": "E-Verify tentative non-confirmation or authorization expiring soon",
+    "domain": "OPERATIONAL",
+    "searchType": "WORK_AUTH_I9",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.everifyStatus",
+          "op": "eq",
+          "value": "TNC"
+        },
+        {
+          "all": [
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "gte",
+              "value": 0
+            },
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "lte",
+              "value": 90
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Work authorization needs follow-up",
+    "explanationTemplate": "E-Verify status {attributes.everifyStatus}; {attributes.daysToExpiry} days until authorization expires."
+  },
+  {
+    "ruleId": "EMP-001",
+    "name": "Fake or shell employer",
+    "searchType": "EMPLOYMENT",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.fakeEmployerFlag",
+      "op": "eq",
+      "value": true
+    },
+    "title": "Employer appears fake or a shell company",
+    "explanationTemplate": "The declared employer could not be validated as a real business.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "EMP-002",
+    "name": "Ineligible for rehire or terminated for cause",
+    "searchType": "EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.rehireEligible",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.terminatedForCause",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Previous employer would not rehire / terminated for cause",
+    "explanationTemplate": "Rehire eligible: {attributes.rehireEligible}; terminated for cause: {attributes.terminatedForCause}."
+  },
+  {
+    "ruleId": "EMP-003",
+    "name": "Title inflation or large tenure discrepancy",
+    "searchType": "EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.titleMatch",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "gt",
+          "value": 90
+        }
+      ]
+    },
+    "title": "Employment details differ from what was declared",
+    "explanationTemplate": "Title matches: {attributes.titleMatch}; tenure differs by {attributes.tenureDiffDays} days."
+  },
+  {
+    "ruleId": "EMP-004",
+    "name": "Employment gap above threshold",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.longestGapMonths",
+      "op": "gt",
+      "value": "$param.employmentGapMonths"
+    },
+    "title": "Unexplained employment gap",
+    "explanationTemplate": "Longest gap is {attributes.longestGapMonths} months (threshold {param.employmentGapMonths})."
+  },
+  {
+    "ruleId": "EMP-005",
+    "name": "Minor tenure discrepancy",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "lte",
+          "value": 30
+        }
+      ]
+    },
+    "title": "Minor tenure discrepancy",
+    "explanationTemplate": "Employment dates differ from the declared dates by {attributes.tenureDiffDays} days."
+  },
+  {
+    "ruleId": "EMP-006",
+    "name": "Employer could not be reached",
+    "domain": "OPERATIONAL",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.employerContactable",
+      "op": "eq",
+      "value": false
+    },
+    "title": "Employer could not be contacted",
+    "explanationTemplate": "The employer was unreachable or refused to verify, so the claim is unconfirmed."
+  },
+  {
+    "ruleId": "EDU-001",
+    "name": "Diploma mill, unaccredited institution or degree not conferred",
+    "searchType": "EDUCATION",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.diplomaMillFlag",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.accredited",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.conferred",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Education credential not valid",
+    "explanationTemplate": "Diploma mill: {attributes.diplomaMillFlag}; accredited: {attributes.accredited}; degree conferred: {attributes.conferred}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "EDU-002",
+    "name": "Large date mismatch or unverifiable institution",
+    "searchType": "EDUCATION",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "gt",
+          "value": 180
+        },
+        {
+          "field": "attributes.institutionVerifiable",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Education details could not be fully confirmed",
+    "explanationTemplate": "Graduation date differs by {attributes.graduationDateDiffDays} days; institution verifiable: {attributes.institutionVerifiable}."
+  },
+  {
+    "ruleId": "EDU-003",
+    "name": "Minor graduation date discrepancy",
+    "searchType": "EDUCATION",
+    "severity": "LOW",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "lte",
+          "value": 90
+        }
+      ]
+    },
+    "title": "Minor education date discrepancy",
+    "explanationTemplate": "Graduation date differs by {attributes.graduationDateDiffDays} days."
+  },
+  {
+    "ruleId": "DIGI-001",
+    "name": "Instant vs manual employment verification conflict",
+    "domain": "OPERATIONAL",
+    "searchType": "DIGITAL_EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.instantMatchesManual",
+      "op": "eq",
+      "value": false
+    },
+    "title": "Instant and manual employment data conflict",
+    "explanationTemplate": "Payroll-network data from {attributes.payrollProvider} conflicts with manual verification on: {attributes.discrepancyFields}."
+  },
+  {
+    "ruleId": "LIC-001",
+    "name": "Licence revoked or suspended",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.licenceStatus",
+      "op": "in",
+      "value": [
+        "REVOKED",
+        "SUSPENDED"
+      ]
+    },
+    "title": "Professional licence revoked or suspended",
+    "explanationTemplate": "{attributes.licenceType} licence from {attributes.issuingBody} is {attributes.licenceStatus}."
+  },
+  {
+    "ruleId": "LIC-002",
+    "name": "Licence expiring soon or restricted",
+    "domain": "OPERATIONAL",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "gte",
+              "value": 0
+            },
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "lte",
+              "value": 60
+            }
+          ]
+        },
+        {
+          "field": "attributes.hasRestrictions",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Licence expiring soon or has restrictions",
+    "explanationTemplate": "{attributes.daysToExpiry} days until expiry; restrictions present: {attributes.hasRestrictions}."
+  },
+  {
+    "ruleId": "LIC-003",
+    "name": "Licence expired",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.licenceStatus",
+      "op": "eq",
+      "value": "EXPIRED"
+    },
+    "title": "Professional licence expired",
+    "explanationTemplate": "{attributes.licenceType} licence from {attributes.issuingBody} has expired."
+  },
+  {
+    "ruleId": "REF-001",
+    "name": "Negative reference",
+    "searchType": "REFERENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.hasNegativeRemarks",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.rehireRecommendation",
+          "op": "eq",
+          "value": "NO"
+        }
+      ]
+    },
+    "title": "Negative reference",
+    "explanationTemplate": "Negative remarks: {attributes.hasNegativeRemarks}; rehire recommendation: {attributes.rehireRecommendation}."
+  },
+  {
+    "ruleId": "REF-002",
+    "name": "Reference unreachable or declined",
+    "domain": "OPERATIONAL",
+    "searchType": "REFERENCE",
+    "severity": "LOW",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.refusedToAnswer",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.unreachable",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Reference could not be obtained",
+    "explanationTemplate": "The reference was unreachable or declined to answer. This is not an adverse finding on its own."
+  },
+  {
+    "ruleId": "CVA-001",
+    "name": "Multiple contradicted resume claims",
+    "searchType": "CV_ANALYSIS",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.claimsContradicted",
+      "op": "gte",
+      "value": 3
+    },
+    "title": "Resume contradicted by verified data",
+    "explanationTemplate": "{attributes.claimsContradicted} of {attributes.claimsTotal} resume claims were contradicted by verification."
+  },
+  {
+    "ruleId": "CVA-002",
+    "name": "Unverifiable resume claims",
+    "searchType": "CV_ANALYSIS",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.claimsUnverifiable",
+      "op": "gte",
+      "value": 1
+    },
+    "title": "Some resume claims could not be verified",
+    "explanationTemplate": "{attributes.claimsUnverifiable} resume claim(s) could not be verified."
+  },
+  {
+    "ruleId": "X-001",
+    "name": "Identity mismatch plus another discrepancy",
+    "scope": "CROSS",
+    "requires": [
+      "IDENTITY"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "any": [
+            {
+              "field": "IDENTITY.attributes.nameMatch",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "field": "IDENTITY.attributes.dobMatch",
+              "op": "eq",
+              "value": false
+            }
+          ]
+        },
+        {
+          "any": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "CRIMINAL.result",
+              "op": "eq",
+              "value": "RECORD_FOUND"
+            },
+            {
+              "field": "CV_ANALYSIS.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Possible impersonation or identity mix-up",
+    "explanationTemplate": "An identity mismatch appears together with another discrepancy (employment: {EMPLOYMENT.result}, education: {EDUCATION.result}, criminal: {CRIMINAL.result})."
+  },
+  {
+    "ruleId": "X-002",
+    "name": "Discrepancies across employment, education and licence",
+    "scope": "CROSS",
+    "requires": [
+      "EMPLOYMENT",
+      "EDUCATION"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        },
+        {
+          "all": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "PROFESSIONAL_LICENCE.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        },
+        {
+          "all": [
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "PROFESSIONAL_LICENCE.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Possible fabrication pattern",
+    "explanationTemplate": "At least two of employment, education and licence verification show discrepancies, which can indicate a pattern of inflated claims."
+  },
+  {
+    "ruleId": "X-003",
+    "name": "Employment gap overlaps a conviction",
+    "scope": "CROSS",
+    "requires": [
+      "EMPLOYMENT",
+      "CRIMINAL"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "all": [
+        {
+          "field": "EMPLOYMENT.attributes.gapOverlapsConviction",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "CRIMINAL.attributes.disposition",
+          "op": "eq",
+          "value": "CONVICTED"
+        }
+      ]
+    },
+    "title": "Employment gap overlaps a conviction",
+    "explanationTemplate": "An employment gap coincides with the period of a conviction or sentence.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "X-004",
+    "name": "Licence expired but employer confirms practice",
+    "scope": "CROSS",
+    "requires": [
+      "PROFESSIONAL_LICENCE",
+      "EMPLOYMENT"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+          "op": "eq",
+          "value": "EXPIRED"
+        },
+        {
+          "field": "EMPLOYMENT.attributes.confirmsPracticeInRole",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Practised with an expired licence",
+    "explanationTemplate": "The licence is expired, but the previous employer confirms the candidate was practising in that role."
+  },
+  {
+    "ruleId": "OPS-001",
+    "name": "Verification overdue",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "ORDERED",
+      "IN_PROGRESS"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "meta.overdue",
+      "op": "eq",
+      "value": true
+    },
+    "title": "Verification is overdue",
+    "explanationTemplate": "{searchType} has been pending {meta.hoursPending}h against an expected {meta.slaHours}h turnaround."
+  },
+  {
+    "ruleId": "OPS-002",
+    "name": "Start date at risk",
+    "domain": "OPERATIONAL",
+    "scope": "ORDER",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "order.daysToStart",
+          "op": "gte",
+          "value": 0
+        },
+        {
+          "field": "order.daysToStart",
+          "op": "lte",
+          "value": "$param.startBufferDays"
+        },
+        {
+          "field": "order.pendingCount",
+          "op": "gt",
+          "value": 0
+        }
+      ]
+    },
+    "title": "Start date at risk: checks still incomplete",
+    "explanationTemplate": "{order.pendingCount} check(s) are still incomplete and the start date is {order.daysToStart} day(s) away (buffer {param.startBufferDays} days)."
+  },
+  {
+    "ruleId": "OPS-003",
+    "name": "Expected checks were not ordered",
+    "domain": "OPERATIONAL",
+    "scope": "ORDER",
+    "severity": "LOW",
+    "condition": {
+      "field": "order.notOrderedCount",
+      "op": "gt",
+      "value": 0
+    },
+    "title": "Expected checks were not ordered",
+    "explanationTemplate": "{order.notOrderedCount} search(es) expected for this job were not ordered, so the report has coverage gaps."
+  },
+  {
+    "ruleId": "OPS-004",
+    "name": "Search could not be verified",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "UNABLE_TO_VERIFY"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "status",
+      "op": "eq",
+      "value": "UNABLE_TO_VERIFY"
+    },
+    "title": "Verification could not be completed",
+    "explanationTemplate": "{searchType} could not be verified, so the related claims remain unconfirmed."
+  },
+  {
+    "ruleId": "OPS-005",
+    "name": "Low match confidence",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "COMPLETED"
+    ],
+    "severity": "LOW",
+    "condition": {
+      "field": "matchConfidence",
+      "op": "lt",
+      "value": "$param.minMatchConfidence"
+    },
+    "title": "Low-confidence match",
+    "explanationTemplate": "{searchType} match confidence is {matchConfidence} (minimum {param.minMatchConfidence}); the record may belong to a different person or be missed."
+  },
+  {
+    "ruleId": "OPS-006",
+    "name": "Stale verification result",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "COMPLETED"
+    ],
+    "severity": "LOW",
+    "condition": {
+      "field": "meta.reportAgeDays",
+      "op": "gt",
+      "value": "$param.maxReportAgeDays"
+    },
+    "title": "Verification result is stale",
+    "explanationTemplate": "{searchType} was completed {meta.reportAgeDays} days ago (maximum {param.maxReportAgeDays} days). Consider refreshing it before the start date."
+  },
+  {
+    "ruleId": "OPS-007",
+    "name": "Source retries or failures",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "ORDERED",
+      "IN_PROGRESS",
+      "UNABLE_TO_VERIFY"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "meta.retryCount",
+      "op": "gte",
+      "value": 3
+    },
+    "title": "Verification source keeps failing",
+    "explanationTemplate": "{searchType} has been retried {meta.retryCount} times without success (last error: {meta.errorCode})."
+  }
+]

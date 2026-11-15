@@ -1,0 +1,150 @@
+{
+  "source": "User-provided CandidateReportResponse DTO and ORD-1006 sample API response (redacted)",
+  "root": "data",
+  "candidateReport": {
+    "order": "application",
+    "coverage": "coverage",
+    "searchCollection": "searchTypes",
+    "integrityRisk": "risk.integrity",
+    "operationalRisk": "risk.operational"
+  },
+  "mappings": [
+    {
+      "rulePath": "attributes.<field>",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].details.<field>",
+      "availability": "direct when details contains the field"
+    },
+    {
+      "rulePath": "result",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].result",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "status",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].status",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "matchConfidence",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].matchConfidence",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "job.roleCategories",
+      "reportPath": "application.roleCategories",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "order.daysToStart",
+      "reportPath": "application.daysToStart",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "order.pendingCount",
+      "reportPath": "coverage.pending.length",
+      "availability": "derived by backend adapter"
+    },
+    {
+      "rulePath": "order.notOrderedCount",
+      "reportPath": "coverage.notOrdered.length",
+      "availability": "derived by backend adapter"
+    },
+    {
+      "rulePath": "<SEARCH_TYPE>.attributes.<field>",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].details.<field>",
+      "availability": "direct when details contains the field; used by CROSS rules"
+    },
+    {
+      "rulePath": "<SEARCH_TYPE>.result",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].result",
+      "availability": "direct; used by CROSS rules"
+    },
+    {
+      "rulePath": "meta.*",
+      "reportPath": null,
+      "availability": "not present in the supplied CandidateReportResponse DTO/sample; supplied by rule-engine runtime context if supported"
+    }
+  ],
+  "reportObservedDetailFields": {
+    "SANCTIONS_WATCHLIST": [
+      "listName",
+      "matchedName",
+      "matchType"
+    ],
+    "IDENTITY": [
+      "idType",
+      "ssnValid",
+      "nameMatch",
+      "dobMatch",
+      "deceasedFlag",
+      "ssnIssuedBeforeDob",
+      "multipleIdentitiesFlag"
+    ],
+    "SEX_OFFENDER": [
+      "registryState",
+      "tier",
+      "matchType"
+    ],
+    "DRUG_HEALTH": [
+      "panelType",
+      "result",
+      "mroStatus"
+    ],
+    "MVR": [
+      "licenceStatus",
+      "licenceClass",
+      "licenceClassMismatch",
+      "duiCount",
+      "totalPoints",
+      "violationsLast3y"
+    ],
+    "WORK_AUTH_I9": [
+      "everifyStatus",
+      "authStatus",
+      "documentType",
+      "daysToExpiry"
+    ],
+    "EMPLOYMENT": [
+      "titleMatch",
+      "tenureDiffDays",
+      "rehireEligible",
+      "terminatedForCause",
+      "employerContactable",
+      "fakeEmployerFlag",
+      "longestGapMonths",
+      "gapOverlapsConviction",
+      "confirmsPracticeInRole"
+    ],
+    "EDUCATION": [
+      "accredited",
+      "diplomaMillFlag",
+      "conferred",
+      "graduationDateDiffDays",
+      "institutionVerifiable"
+    ],
+    "DIGITAL_EMPLOYMENT": [
+      "payrollProvider",
+      "instantMatchesManual",
+      "discrepancyFields"
+    ],
+    "PROFESSIONAL_LICENCE": [
+      "licenceType",
+      "issuingBody",
+      "licenceStatus",
+      "daysToExpiry",
+      "hasRestrictions"
+    ],
+    "REFERENCE": [
+      "hasNegativeRemarks",
+      "rehireRecommendation",
+      "refusedToAnswer",
+      "unreachable"
+    ],
+    "CV_ANALYSIS": [
+      "claimsTotal",
+      "claimsContradicted",
+      "claimsUnverifiable"
+    ]
+  },
+  "important": "The sample report is one example, not an exhaustive list of every field the backend may emit. A field not observed in that sample is not automatically invalid."
+}

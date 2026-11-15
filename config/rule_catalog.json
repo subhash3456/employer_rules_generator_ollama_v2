@@ -1,0 +1,666 @@
+{
+  "sourceOfTruth": "reference/existing_rules_reference.json (47 existing rules supplied by user)",
+  "searchTypes": [
+    "CRIMINAL",
+    "CV_ANALYSIS",
+    "DIGITAL_EMPLOYMENT",
+    "DRUG_HEALTH",
+    "EDUCATION",
+    "EMPLOYMENT",
+    "IDENTITY",
+    "MVR",
+    "PROFESSIONAL_LICENCE",
+    "REFERENCE",
+    "SANCTIONS_WATCHLIST",
+    "SEX_OFFENDER",
+    "WORK_AUTH_I9"
+  ],
+  "fieldsBySearchType": {
+    "CRIMINAL": [
+      {
+        "path": "attributes.candidateDisclosed",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.candidateDisclosed"
+      },
+      {
+        "path": "attributes.disposition",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.disposition"
+      },
+      {
+        "path": "attributes.offenceCategory",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.offenceCategory"
+      },
+      {
+        "path": "attributes.severity",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.severity"
+      },
+      {
+        "path": "attributes.yearsSinceOffence",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.yearsSinceOffence"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      },
+      {
+        "path": "result",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].result"
+      },
+      {
+        "path": "CRIMINAL.attributes.disposition",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CRIMINAL].details.disposition"
+      },
+      {
+        "path": "CRIMINAL.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CRIMINAL].result"
+      }
+    ],
+    "CV_ANALYSIS": [
+      {
+        "path": "attributes.claimsContradicted",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CV_ANALYSIS].details.claimsContradicted"
+      },
+      {
+        "path": "attributes.claimsUnverifiable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CV_ANALYSIS].details.claimsUnverifiable"
+      },
+      {
+        "path": "CV_ANALYSIS.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CV_ANALYSIS].result"
+      }
+    ],
+    "DIGITAL_EMPLOYMENT": [
+      {
+        "path": "attributes.instantMatchesManual",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DIGITAL_EMPLOYMENT].details.instantMatchesManual"
+      }
+    ],
+    "DRUG_HEALTH": [
+      {
+        "path": "attributes.mroStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DRUG_HEALTH].details.mroStatus"
+      },
+      {
+        "path": "attributes.result",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DRUG_HEALTH].details.result"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "EDUCATION": [
+      {
+        "path": "attributes.accredited",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.accredited"
+      },
+      {
+        "path": "attributes.conferred",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.conferred"
+      },
+      {
+        "path": "attributes.diplomaMillFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.diplomaMillFlag"
+      },
+      {
+        "path": "attributes.graduationDateDiffDays",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.graduationDateDiffDays"
+      },
+      {
+        "path": "attributes.institutionVerifiable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.institutionVerifiable"
+      },
+      {
+        "path": "EDUCATION.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EDUCATION].result"
+      }
+    ],
+    "EMPLOYMENT": [
+      {
+        "path": "attributes.employerContactable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.employerContactable"
+      },
+      {
+        "path": "attributes.fakeEmployerFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.fakeEmployerFlag"
+      },
+      {
+        "path": "attributes.longestGapMonths",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.longestGapMonths"
+      },
+      {
+        "path": "attributes.rehireEligible",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.rehireEligible"
+      },
+      {
+        "path": "attributes.tenureDiffDays",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.tenureDiffDays"
+      },
+      {
+        "path": "attributes.terminatedForCause",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.terminatedForCause"
+      },
+      {
+        "path": "attributes.titleMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.titleMatch"
+      },
+      {
+        "path": "EMPLOYMENT.attributes.confirmsPracticeInRole",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].details.confirmsPracticeInRole"
+      },
+      {
+        "path": "EMPLOYMENT.attributes.gapOverlapsConviction",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].details.gapOverlapsConviction"
+      },
+      {
+        "path": "EMPLOYMENT.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].result"
+      }
+    ],
+    "IDENTITY": [
+      {
+        "path": "attributes.deceasedFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.deceasedFlag"
+      },
+      {
+        "path": "attributes.dobMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.dobMatch"
+      },
+      {
+        "path": "attributes.multipleIdentitiesFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.multipleIdentitiesFlag"
+      },
+      {
+        "path": "attributes.nameMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.nameMatch"
+      },
+      {
+        "path": "attributes.ssnIssuedBeforeDob",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.ssnIssuedBeforeDob"
+      },
+      {
+        "path": "attributes.ssnValid",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.ssnValid"
+      },
+      {
+        "path": "IDENTITY.attributes.dobMatch",
+        "context": "CROSS",
+        "reportPath": "searchTypes[IDENTITY].details.dobMatch"
+      },
+      {
+        "path": "IDENTITY.attributes.nameMatch",
+        "context": "CROSS",
+        "reportPath": "searchTypes[IDENTITY].details.nameMatch"
+      }
+    ],
+    "MVR": [
+      {
+        "path": "attributes.duiCount",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.duiCount"
+      },
+      {
+        "path": "attributes.licenceClassMismatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.licenceClassMismatch"
+      },
+      {
+        "path": "attributes.licenceStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.licenceStatus"
+      },
+      {
+        "path": "attributes.totalPoints",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.totalPoints"
+      },
+      {
+        "path": "attributes.violationsLast3y",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.violationsLast3y"
+      },
+      {
+        "path": "attributes.yearsSinceLastDui",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.yearsSinceLastDui"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "PROFESSIONAL_LICENCE": [
+      {
+        "path": "attributes.daysToExpiry",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.daysToExpiry"
+      },
+      {
+        "path": "attributes.hasRestrictions",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.hasRestrictions"
+      },
+      {
+        "path": "attributes.licenceStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.licenceStatus"
+      },
+      {
+        "path": "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+        "context": "CROSS",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.licenceStatus"
+      },
+      {
+        "path": "PROFESSIONAL_LICENCE.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].result"
+      }
+    ],
+    "REFERENCE": [
+      {
+        "path": "attributes.hasNegativeRemarks",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.hasNegativeRemarks"
+      },
+      {
+        "path": "attributes.refusedToAnswer",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.refusedToAnswer"
+      },
+      {
+        "path": "attributes.rehireRecommendation",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.rehireRecommendation"
+      },
+      {
+        "path": "attributes.unreachable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.unreachable"
+      }
+    ],
+    "SANCTIONS_WATCHLIST": [
+      {
+        "path": "attributes.listName",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SANCTIONS_WATCHLIST].details.listName"
+      },
+      {
+        "path": "attributes.matchType",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SANCTIONS_WATCHLIST].details.matchType"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "SEX_OFFENDER": [
+      {
+        "path": "attributes.matchType",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SEX_OFFENDER].details.matchType"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "WORK_AUTH_I9": [
+      {
+        "path": "attributes.authStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.authStatus"
+      },
+      {
+        "path": "attributes.daysToExpiry",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.daysToExpiry"
+      },
+      {
+        "path": "attributes.everifyStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.everifyStatus"
+      }
+    ]
+  },
+  "crossFields": [
+    "CRIMINAL.attributes.disposition",
+    "CRIMINAL.result",
+    "CV_ANALYSIS.result",
+    "EDUCATION.result",
+    "EMPLOYMENT.attributes.confirmsPracticeInRole",
+    "EMPLOYMENT.attributes.gapOverlapsConviction",
+    "EMPLOYMENT.result",
+    "IDENTITY.attributes.dobMatch",
+    "IDENTITY.attributes.nameMatch",
+    "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+    "PROFESSIONAL_LICENCE.result"
+  ],
+  "orderFields": [
+    "order.daysToStart",
+    "order.notOrderedCount",
+    "order.pendingCount"
+  ],
+  "globalFields": [
+    "matchConfidence",
+    "meta.overdue",
+    "meta.reportAgeDays",
+    "meta.retryCount",
+    "status"
+  ],
+  "allowedOperators": [
+    "contains",
+    "containsAny",
+    "eq",
+    "gt",
+    "gte",
+    "in",
+    "lt",
+    "lte"
+  ],
+  "conditionGrammar": {
+    "leaf": {
+      "field": "string",
+      "op": "allowed operator",
+      "value": "JSON scalar/array or $param.name"
+    },
+    "groups": [
+      "all",
+      "any",
+      "not"
+    ],
+    "notShape": "not may contain one condition object or an array of conditions"
+  },
+  "scopes": [
+    "CROSS",
+    "ORDER",
+    "PER_SEARCH"
+  ],
+  "severityValues": [
+    "HIGH",
+    "LOW",
+    "MEDIUM"
+  ],
+  "domains": [
+    "INTEGRITY",
+    "OPERATIONAL"
+  ],
+  "complianceFlags": [
+    "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+    "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+  ],
+  "parameters": [
+    "criminalLookbackYears",
+    "employmentGapMonths",
+    "maxReportAgeDays",
+    "minMatchConfidence",
+    "mvrMaxPoints",
+    "startBufferDays"
+  ],
+  "evaluateOnStatuses": [
+    "COMPLETED",
+    "IN_PROGRESS",
+    "ORDERED",
+    "UNABLE_TO_VERIFY"
+  ],
+  "supportedOptionalProperties": [
+    "domain",
+    "scope",
+    "requires",
+    "evaluateOn",
+    "modifiers",
+    "complianceFlags"
+  ],
+  "modifierEffects": [
+    "ESCALATE"
+  ],
+  "ruleProperties": [
+    "ruleId",
+    "name",
+    "domain",
+    "scope",
+    "searchType",
+    "requires",
+    "evaluateOn",
+    "severity",
+    "condition",
+    "modifiers",
+    "title",
+    "explanationTemplate",
+    "complianceFlags"
+  ],
+  "enumValuesByField": {
+    "CRIMINAL.attributes.disposition": [
+      "CONVICTED"
+    ],
+    "CRIMINAL.result": [
+      "RECORD_FOUND"
+    ],
+    "CV_ANALYSIS.result": [
+      "DISCREPANCY"
+    ],
+    "EDUCATION.result": [
+      "DISCREPANCY"
+    ],
+    "EMPLOYMENT.attributes.confirmsPracticeInRole": [
+      true
+    ],
+    "EMPLOYMENT.attributes.gapOverlapsConviction": [
+      true
+    ],
+    "EMPLOYMENT.result": [
+      "DISCREPANCY"
+    ],
+    "IDENTITY.attributes.dobMatch": [
+      false
+    ],
+    "IDENTITY.attributes.nameMatch": [
+      false
+    ],
+    "PROFESSIONAL_LICENCE.attributes.licenceStatus": [
+      "EXPIRED"
+    ],
+    "PROFESSIONAL_LICENCE.result": [
+      "DISCREPANCY"
+    ],
+    "attributes.accredited": [
+      false
+    ],
+    "attributes.authStatus": [
+      "EXPIRED"
+    ],
+    "attributes.candidateDisclosed": [
+      false
+    ],
+    "attributes.claimsContradicted": [
+      3
+    ],
+    "attributes.claimsUnverifiable": [
+      1
+    ],
+    "attributes.conferred": [
+      false
+    ],
+    "attributes.daysToExpiry": [
+      0,
+      60,
+      90
+    ],
+    "attributes.deceasedFlag": [
+      true
+    ],
+    "attributes.diplomaMillFlag": [
+      true
+    ],
+    "attributes.disposition": [
+      "CONVICTED",
+      "PENDING"
+    ],
+    "attributes.dobMatch": [
+      false
+    ],
+    "attributes.duiCount": [
+      1
+    ],
+    "attributes.employerContactable": [
+      false
+    ],
+    "attributes.everifyStatus": [
+      "FNC",
+      "TNC"
+    ],
+    "attributes.fakeEmployerFlag": [
+      true
+    ],
+    "attributes.graduationDateDiffDays": [
+      0,
+      180,
+      90
+    ],
+    "attributes.hasNegativeRemarks": [
+      true
+    ],
+    "attributes.hasRestrictions": [
+      true
+    ],
+    "attributes.instantMatchesManual": [
+      false
+    ],
+    "attributes.institutionVerifiable": [
+      false
+    ],
+    "attributes.licenceClassMismatch": [
+      true
+    ],
+    "attributes.licenceStatus": [
+      "EXPIRED"
+    ],
+    "attributes.matchType": [
+      "EXACT",
+      "POTENTIAL"
+    ],
+    "attributes.mroStatus": [
+      "PENDING",
+      "VERIFIED_LEGIT"
+    ],
+    "attributes.multipleIdentitiesFlag": [
+      true
+    ],
+    "attributes.nameMatch": [
+      false
+    ],
+    "attributes.refusedToAnswer": [
+      true
+    ],
+    "attributes.rehireEligible": [
+      false
+    ],
+    "attributes.rehireRecommendation": [
+      "NO"
+    ],
+    "attributes.result": [
+      "DILUTE"
+    ],
+    "attributes.severity": [
+      "FELONY",
+      "MISDEMEANOR"
+    ],
+    "attributes.ssnIssuedBeforeDob": [
+      true
+    ],
+    "attributes.ssnValid": [
+      false
+    ],
+    "attributes.tenureDiffDays": [
+      0,
+      30,
+      90
+    ],
+    "attributes.terminatedForCause": [
+      true
+    ],
+    "attributes.titleMatch": [
+      false
+    ],
+    "attributes.unreachable": [
+      true
+    ],
+    "attributes.violationsLast3y": [
+      3
+    ],
+    "attributes.yearsSinceLastDui": [
+      5
+    ],
+    "job.roleCategories": [
+      "CHILD_FACING",
+      "DRIVING",
+      "HEALTHCARE"
+    ],
+    "meta.overdue": [
+      true
+    ],
+    "meta.retryCount": [
+      3
+    ],
+    "order.daysToStart": [
+      0
+    ],
+    "order.notOrderedCount": [
+      0
+    ],
+    "order.pendingCount": [
+      0
+    ],
+    "result": [
+      "RECORD_FOUND"
+    ],
+    "status": [
+      "UNABLE_TO_VERIFY"
+    ]
+  },
+  "notes": [
+    "Fields/operators/values are extracted from the supplied existing rules, not invented.",
+    "A field may be valid in the rule engine but not directly exposed by the sample report; runtime context may supply meta.* values.",
+    "When a policy threshold or field cannot be represented, report it as unmapped rather than guessing."
+  ]
+}

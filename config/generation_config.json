@@ -1,0 +1,11 @@
+{
+  "defaultScopeForSearchTypeRules": "PER_SEARCH",
+  "defaultChatModel": "llama3.1:8b",
+  "defaultEmbeddingModel": "nomic-embed-text",
+  "maxRetrievedChunks": 14,
+  "temperature": 0,
+  "humanApprovalRequired": true,
+  "outputFormat": "JSON array compatible with the existing Java rule engine",
+  "idPolicy": "Use a new prefix not already present in reference rules; do not overwrite existing ruleIds.",
+  "safety": "Never generate automated hire/reject/rank decisions. Do not use protected characteristics or proxies. Require human review and jurisdiction-specific compliance review."
+}

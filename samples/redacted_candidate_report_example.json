@@ -1,0 +1,59 @@
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "orderId": "ORD-SAMPLE",
+    "application": {
+      "jobTitle": "Registered Nurse",
+      "jobState": "NJ",
+      "roleCategories": [
+        "HEALTHCARE"
+      ],
+      "daysToStart": 5
+    },
+    "coverage": {
+      "expected": [
+        "CRIMINAL",
+        "EDUCATION"
+      ],
+      "ordered": [
+        "CRIMINAL",
+        "EDUCATION"
+      ],
+      "completed": [
+        "CRIMINAL"
+      ],
+      "pending": [
+        "EDUCATION"
+      ],
+      "notOrdered": [],
+      "coveragePercent": 50
+    },
+    "searchTypes": [
+      {
+        "searchType": "SANCTIONS_WATCHLIST",
+        "expected": true,
+        "ordered": true,
+        "status": "COMPLETED",
+        "result": "RECORD_FOUND",
+        "matchConfidence": null,
+        "details": {
+          "listName": "OIG",
+          "matchType": "EXACT"
+        },
+        "rulesApplied": [],
+        "rulesSkipped": [],
+        "riskLevel": "HIGH",
+        "risks": []
+      }
+    ],
+    "risk": {
+      "integrity": {
+        "level": "HIGH"
+      },
+      "operational": {
+        "level": "LOW"
+      }
+    }
+  }
+}
