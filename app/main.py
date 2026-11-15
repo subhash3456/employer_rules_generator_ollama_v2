@@ -29,6 +29,37 @@ if upload and st.button('Understand policy and generate draft rules', type='prim
         with st.spinner('Extracting PDF, retrieving policy passages and compiling with local Ollama...'):
             result = generate_rules(upload.getvalue(), upload.name)
         gen = result['generation']
+        st.subheader("Generation Debug")
+
+        st.write("Generated rules:", len(gen.get("rules", [])))
+
+        st.write(
+            "Unmapped policy items:",
+            gen.get("unmappedPolicyItems", [])
+            )
+
+        st.write(
+            "Assumptions:",
+            gen.get("assumptions", [])
+            )
+
+        st.write(
+            "Review notes:",
+            gen.get("reviewNotes", [])
+            )
+
+        st.write(
+            "Validation errors:",
+            gen.get("validationErrors", [])
+            )
+
+        st.write(
+            "Evidence errors:",
+            gen.get("evidenceErrors", [])
+            )
+
+        st.json(gen)
+
         rules_json = json.dumps(gen['rules'], indent=2, ensure_ascii=False)
         evidence_json = json.dumps({k: gen[k] for k in ['sourceEvidence','unmappedPolicyItems','assumptions','reviewNotes','validationErrors','evidenceErrors']}, indent=2, ensure_ascii=False)
         if gen['exportAllowed']:

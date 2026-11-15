@@ -1,0 +1,3939 @@
+===== PROJECT DIRECTORIES =====
+app
+config
+output
+reference
+samples
+tests
+
+
+===== README.md =====
+
+# Recruiter Policy → Existing Java `rules.json` (Ollama, local)
+
+This version is aligned to the rule DSL and API examples supplied for your Java application. It is a local Python/Streamlit tool: upload a recruiter policy PDF, extract policy requirements with Ollama, compile them into your existing rule JSON shape, validate the output, and download a draft `rules.json` array.
+
+## What is included
+
+- `reference/existing_rules_reference.json`: the 47 rules from your supplied `rules.json`, preserved as the baseline/reference.
+- `config/rule_catalog.json`: extracted supported search types, fields, operators, condition grammar, scopes, severity values, domains, parameters, `evaluateOn` values, modifier effects and compliance flags.
+- `config/candidate_report_schema.json`: mapping between the `CandidateReportResponse` API shape and the rule-engine field aliases.
+- `config/generation_config.json`: generation defaults and safety rules.
+- `app/pipeline.py`: PDF extraction, Ollama calls, retrieval, DSL validation, duplicate-ID checks and source-quote verification.
+- `app/main.py`: Streamlit UI.
+- `tests/test_baseline.py`: checks that all 47 supplied baseline rules pass the validator.
+- `samples/sample_recruiter_policy.pdf`: sample PDF from the previous starter project.
+- `samples/redacted_candidate_report_example.json`: synthetic/redacted example using the supplied report structure. No candidate PII is included.
+
+## 1. Prerequisites
+
+- Python 3.10 or newer
+- Ollama installed and running locally
+- Enough RAM for the selected local model
+
+Open a terminal and pull the models (defaults):
+
+```bash
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+```
+
+You can use another Ollama chat model by changing `OLLAMA_CHAT_MODEL` in `.env`. The chat model should follow JSON output reliably. Embeddings are used for passage retrieval; if `/api/embed` is unavailable, the app falls back to lexical retrieval.
+
+## 2. Create the Python environment
+
+Windows PowerShell:
+
+```powershell
+cd path\to\employer_rules_generator_ollama_v2
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+macOS/Linux:
+
+```bash
+cd employer_rules_generator_ollama_v2
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+## 3. Run the compatibility test
+
+```bash
+python -m unittest discover -s tests
+```
+
+All 47 reference rules should pass. If you edit the catalog or validator, rerun this test.
+
+## 4. Start the app
+
+```bash
+streamlit run app/main.py
+```
+
+The browser UI normally opens at `http://localhost:8501`.
+
+## 5. Output contract
+
+The downloadable `rules.json` is a **JSON array of rule definitions**, not the runtime selection response returned by `/api/orders/{orderId}/risk/rules`.
+
+The compiler supports the shapes observed in your 47-rule baseline:
+
+- scopes: `PER_SEARCH`, `CROSS`, `ORDER`
+- conditions: leaf `{field, op, value}` and nested `all`, `any`, `not`
+- operators: only those present in the supplied baseline
+- optional properties: `domain`, `scope`, `requires`, `evaluateOn`, `modifiers`, `complianceFlags`
+- modifier effect: `ESCALATE`
+- parameter references: only those found in the supplied baseline
+
+Runtime properties such as `suggested`, `runnable`, and `waitingFor` are intentionally not generated. Your Java backend calculates those from the current order/report state.
+
+## 6. Candidate report mapping
+
+The supplied report response exposes `searchTypes[]`, with `result`, `status`, `matchConfidence`, and `details`. The existing rule DSL uses aliases such as `attributes.foo`, `result`, and `job.roleCategories`.
+
+The mapping contract is in `config/candidate_report_schema.json`. Typical mappings:
+
+| Existing rule DSL path | Candidate report path |
+|---|---|
+| `attributes.matchType` | `searchTypes[SEARCH_TYPE].details.matchType` |
+| `result` | `searchTypes[SEARCH_TYPE].result` |
+| `status` | `searchTypes[SEARCH_TYPE].status` |
+| `matchConfidence` | `searchTypes[SEARCH_TYPE].matchConfidence` |
+| `job.roleCategories` | `application.roleCategories` |
+| `order.daysToStart` | `application.daysToStart` |
+| `order.pendingCount` | derived from `coverage.pending.length` |
+| `order.notOrderedCount` | derived from `coverage.notOrdered.length` |
+| `meta.*` | not directly present in the supplied DTO/sample; requires rule-engine runtime context |
+
+**Important:** The sample report is not an exhaustive schema of all possible `details` fields. A field not seen in one sample is not automatically invalid. Conversely, a field used in the rule DSL may require runtime enrichment not shown in the DTO.
+
+## 7. Validation behavior
+
+The app blocks the validated download if any of these fail:
+
+- unknown property, search type, scope, operator, severity, domain or compliance flag
+- condition field outside the catalog for the rule's scope/search type
+- malformed nested condition or modifier
+- unknown parameter reference
+- duplicate rule ID or reuse of an existing rule ID
+- missing source-evidence entry or a quote not found verbatim in extracted PDF text
+
+The UI may still let you download a `rules.draft.json` for debugging when validation fails. Do not load that draft into your Java service.
+
+## 8. Recommended Java integration flow
+
+1. Download the generated `rules.json` array.
+2. Review every rule against the cited policy page/quote.
+3. Have your compliance/legal reviewer approve the policy interpretation, severity, and any compliance flags.
+4. Confirm all generated field paths are supported by your Java rule engine and its runtime context adapter.
+5. Run your Java rule-engine unit/integration tests with representative reports, including missing/pending/unable-to-verify states.
+6. Deploy only through your normal configuration/versioning process with rollback.
+
+The Python app does not call your `localhost:8080` Java API and does not change the Java backend. It generates a file for review and integration.
+
+## Limitations
+
+- Scanned/image-only PDFs are not OCR'd in this build; provide searchable PDFs.
+- The catalog is grounded in the supplied 47 rules and the two supplied API response examples. If your Java engine supports additional fields/operators, add them explicitly to the catalog and tests before asking the model to use them.
+- A successful structural/evidence check does not establish legal compliance or policy correctness.
+- Employment-screening rules are high impact. This tool must not automatically hire, reject, or rank candidates. Human review and jurisdiction-specific legal/compliance approval remain mandatory.
+
+
+===== app/__init__.py =====
+
+
+
+===== app/main.py =====
+
+import json
+import streamlit as st
+from pipeline import generate_rules, OLLAMA_BASE_URL, CHAT_MODEL, EMBED_MODEL, ROOT
+
+st.set_page_config(page_title='Recruiter Policy → Java Rules', page_icon='🛡️', layout='wide')
+st.title('Recruiter Policy → Existing Java rules.json')
+st.caption('Local PDF extraction + Ollama. Generated rules are drafts and must be reviewed before deployment.')
+
+with st.sidebar:
+    st.subheader('Local Ollama')
+    st.code(f'{OLLAMA_BASE_URL}\nChat: {CHAT_MODEL}\nEmbeddings: {EMBED_MODEL}')
+    st.markdown(f'```bash\nollama pull {CHAT_MODEL}\nollama pull {EMBED_MODEL}\n```')
+    st.caption('If your Ollama version/model does not support /api/embed, the app falls back to lexical retrieval.')
+    st.divider()
+    st.subheader('Loaded rule engine contract')
+    try:
+        ref = json.loads((ROOT / 'reference' / 'existing_rules_reference.json').read_text(encoding='utf-8'))
+        cat = json.loads((ROOT / 'config' / 'rule_catalog.json').read_text(encoding='utf-8'))
+        st.metric('Existing reference rules', len(ref))
+        st.metric('Supported search types', len(cat['searchTypes']))
+        st.metric('Supported operators', len(cat['allowedOperators']))
+    except Exception as exc:
+        st.error(str(exc))
+
+st.warning('Employment screening is high impact. This tool does not make hiring decisions. Do not deploy generated rules without legal/compliance review and human approval. Never use protected characteristics or proxies.')
+upload = st.file_uploader('Upload recruiter policy PDF', type=['pdf'])
+if upload and st.button('Understand policy and generate draft rules', type='primary'):
+    try:
+        with st.spinner('Extracting PDF, retrieving policy passages and compiling with local Ollama...'):
+            result = generate_rules(upload.getvalue(), upload.name)
+        gen = result['generation']
+        st.subheader("Generation Debug")
+
+        st.write("Generated rules:", len(gen.get("rules", [])))
+
+        st.write(
+            "Unmapped policy items:",
+            gen.get("unmappedPolicyItems", [])
+            )
+
+        st.write(
+            "Assumptions:",
+            gen.get("assumptions", [])
+            )
+
+        st.write(
+            "Review notes:",
+            gen.get("reviewNotes", [])
+            )
+
+        st.write(
+            "Validation errors:",
+            gen.get("validationErrors", [])
+            )
+
+        st.write(
+            "Evidence errors:",
+            gen.get("evidenceErrors", [])
+            )
+
+        st.json(gen)
+
+        rules_json = json.dumps(gen['rules'], indent=2, ensure_ascii=False)
+        evidence_json = json.dumps({k: gen[k] for k in ['sourceEvidence','unmappedPolicyItems','assumptions','reviewNotes','validationErrors','evidenceErrors']}, indent=2, ensure_ascii=False)
+        if gen['exportAllowed']:
+            st.success(f'Generated {len(gen["rules"])} draft rule(s). Structural validation and source-evidence checks passed. Human approval is still required.')
+        else:
+            st.error('Validation failed. Fix the issues before exporting or loading these rules into Java.')
+        if gen['validationErrors']:
+            st.subheader('Rule validation errors')
+            for err in gen['validationErrors']: st.error(err)
+        if gen['evidenceErrors']:
+            st.subheader('Source evidence errors')
+            for err in gen['evidenceErrors']: st.error(err)
+        st.subheader('Generated rules.json — JSON array')
+        st.code(rules_json or '[]', language='json')
+        if gen['exportAllowed']:
+            st.download_button('Download rules.json', rules_json, 'rules.json', 'application/json')
+        else:
+            st.download_button('Download draft for debugging (NOT validated)', rules_json, 'rules.draft.json', 'application/json')
+        st.download_button('Download generation review report', evidence_json, 'generation_review.json', 'application/json')
+        a,b=st.columns(2)
+        with a:
+            with st.expander('Source evidence quotes'):
+                st.json(gen['sourceEvidence'])
+            with st.expander('Unmapped policy requirements'):
+                st.write(gen['unmappedPolicyItems'] or 'None')
+        with b:
+            with st.expander('Human review notes and assumptions'):
+                st.write({'reviewNotes':gen['reviewNotes'],'assumptions':gen['assumptions']})
+            with st.expander('Retrieved PDF passages'):
+                for item in result['retrievedChunks']:
+                    st.markdown(f'**PDF page {item["page"]}**')
+                    st.write(item['text'])
+        with st.expander('Full extracted PDF text'):
+            st.text(result['fullText'])
+    except Exception as exc:
+        st.exception(exc)
+        st.info('Confirm Ollama is running, the configured models are pulled, and the PDF contains selectable text.')
+else:
+    st.info('Start with samples/sample_recruiter_policy.pdf. The project includes your supplied 47-rule baseline and a redacted candidate-report example.')
+
+
+===== app/pipeline.py =====
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+import fitz
+import numpy as np
+import requests
+from dotenv import load_dotenv
+
+
+# ============================================================
+# PROJECT CONFIGURATION
+# ============================================================
+
+# Supports either:
+#   project_root/pipeline.py
+# or:
+#   project_root/some_package/pipeline.py
+_THIS_DIR = Path(__file__).resolve().parent
+ROOT = _THIS_DIR if (_THIS_DIR / "config").exists() else _THIS_DIR.parent
+
+load_dotenv(ROOT / ".env")
+
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL",
+    "http://localhost:11434"
+).rstrip("/")
+
+CHAT_MODEL = os.getenv(
+    "OLLAMA_CHAT_MODEL",
+    "qwen2.5:3b"
+)
+
+EMBED_MODEL = os.getenv(
+    "OLLAMA_EMBED_MODEL",
+    "nomic-embed-text"
+)
+
+TIMEOUT = int(
+    os.getenv("OLLAMA_TIMEOUT_SECONDS", "300")
+)
+
+
+# ============================================================
+# STAGE 2: EXISTING JAVA RULE DSL OUTPUT SCHEMA
+# ============================================================
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rules": {
+            "type": "array",
+            "items": {"type": "object"}
+        },
+        "sourceEvidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ruleId": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "page": {"type": "integer"}
+                },
+                "required": ["ruleId", "quote", "page"]
+            }
+        },
+        "unmappedPolicyItems": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "assumptions": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "reviewNotes": {
+            "type": "array",
+            "items": {"type": "string"}
+        }
+    },
+    "required": [
+        "rules",
+        "sourceEvidence",
+        "unmappedPolicyItems",
+        "assumptions",
+        "reviewNotes"
+    ]
+}
+
+
+# ============================================================
+# STAGE 1: POLICY REQUIREMENT EXTRACTION SCHEMA
+# ============================================================
+
+EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "requirements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "category": {"type": "string"},
+                    "role": {
+                        "type": ["string", "null"]
+                    },
+                    "requirementType": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "threshold": {
+                        "type": ["number", "null"]
+                    },
+                    "unit": {
+                        "type": ["string", "null"]
+                    },
+                    "sourceEvidence": {
+                        "type": "object",
+                        "properties": {
+                            "quote": {"type": "string"},
+                            "page": {"type": "integer"}
+                        },
+                        "required": ["quote", "page"]
+                    }
+                },
+                "required": [
+                    "id",
+                    "category",
+                    "role",
+                    "requirementType",
+                    "statement",
+                    "threshold",
+                    "unit",
+                    "sourceEvidence"
+                ]
+            }
+        },
+        "unresolvedItems": {
+            "type": "array",
+            "items": {"type": "string"}
+        }
+    },
+    "required": [
+        "requirements",
+        "unresolvedItems"
+    ]
+}
+
+
+# ============================================================
+# COMMON JSON / FILE HELPERS
+# ============================================================
+
+def load_json(path: Path) -> Any:
+    if not path.exists():
+        raise FileNotFoundError(f"Required JSON file not found: {path}")
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_catalog() -> dict:
+    return load_json(ROOT / "config" / "rule_catalog.json")
+
+
+def load_reference_rules() -> list[dict]:
+    return load_json(
+        ROOT / "reference" / "existing_rules_reference.json"
+    )
+
+
+def normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+# ============================================================
+# PDF EXTRACTION
+# ============================================================
+
+def extract_pdf_pages(pdf_bytes: bytes) -> list[dict]:
+    if not pdf_bytes.startswith(b"%PDF-"):
+        raise ValueError(
+            "Uploaded file does not have a valid PDF header."
+        )
+
+    try:
+        doc = fitz.open(
+            stream=pdf_bytes,
+            filetype="pdf"
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Unable to open PDF: {exc}"
+        ) from exc
+
+    pages = []
+
+    try:
+        for index, page in enumerate(doc, start=1):
+            text = page.get_text("text").strip()
+
+            pdf_markers = [
+                "%PDF-",
+                "endobj",
+                "stream",
+                "xref",
+                "/FlateDecode",
+                "/ASCII85Decode"
+            ]
+
+            marker_count = sum(
+                marker in text
+                for marker in pdf_markers
+            )
+
+            if marker_count >= 2:
+                raise ValueError(
+                    f"Page {index}: PDF extraction returned PDF "
+                    "internal structure instead of readable text. "
+                    "Please verify the uploaded PDF."
+                )
+
+            if text:
+                pages.append({
+                    "page": index,
+                    "text": text
+                })
+    finally:
+        doc.close()
+
+    if not pages:
+        raise ValueError(
+            "No readable text found. The PDF may be scanned "
+            "or image-based. OCR may be required."
+        )
+
+    return pages
+
+
+def chunk_pages(
+    pages: list[dict],
+    words_per_chunk: int = 650,
+    overlap: int = 90
+) -> list[dict]:
+
+    if words_per_chunk <= 0:
+        raise ValueError("words_per_chunk must be greater than zero.")
+
+    if overlap < 0 or overlap >= words_per_chunk:
+        raise ValueError(
+            "overlap must be >= 0 and smaller than words_per_chunk."
+        )
+
+    chunks = []
+
+    for page in pages:
+        words = page["text"].split()
+        start = 0
+
+        while start < len(words):
+            end = min(
+                start + words_per_chunk,
+                len(words)
+            )
+
+            chunks.append({
+                "page": page["page"],
+                "text": " ".join(words[start:end])
+            })
+
+            if end == len(words):
+                break
+
+            start = end - overlap
+
+    return chunks
+
+
+# ============================================================
+# OLLAMA CHAT AND EMBEDDINGS
+# ============================================================
+
+def ollama_chat(
+    prompt: str,
+    output_schema: dict | None = None,
+    system_prompt: str | None = None
+) -> str:
+
+    if output_schema is None:
+        output_schema = OUTPUT_SCHEMA
+
+    if system_prompt is None:
+        system_prompt = (
+            "You are a conservative compiler that converts recruiter "
+            "policy text into an existing JSON rule DSL. "
+            "Return only the requested JSON object. "
+            "Do not invent thresholds, fields, severity, or legal duties. "
+            "If a requirement cannot be represented safely, put it "
+            "in unmappedPolicyItems. "
+            "Do not make hiring, rejection, or ranking decisions."
+        )
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": CHAT_MODEL,
+                "stream": False,
+                "format": output_schema,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "options": {
+                    "temperature": 0,
+                    "num_ctx": 8192,
+                    "num_predict": 4096
+                }
+            },
+            timeout=TIMEOUT
+        )
+
+        response.raise_for_status()
+
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Unable to communicate with Ollama at "
+            f"{OLLAMA_BASE_URL}: {exc}"
+        ) from exc
+
+    data = response.json()
+    content = data.get("message", {}).get("content", "")
+
+    if not content:
+        raise ValueError(
+            f"Ollama returned an empty response: {data}"
+        )
+
+    return content
+
+
+def ollama_embed(texts: list[str]) -> np.ndarray:
+    if not texts:
+        raise ValueError("Cannot create embeddings for an empty text list.")
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/embed",
+            json={
+                "model": EMBED_MODEL,
+                "input": texts
+            },
+            timeout=TIMEOUT
+        )
+
+        response.raise_for_status()
+
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Unable to create Ollama embeddings: {exc}"
+        ) from exc
+
+    data = response.json()
+    vectors = data.get("embeddings")
+
+    if not vectors:
+        raise RuntimeError(
+            "Ollama /api/embed returned no embeddings."
+        )
+
+    return np.asarray(
+        vectors,
+        dtype=np.float32
+    )
+
+
+def retrieve_chunks(
+    chunks: list[dict],
+    top_k: int = 14
+) -> tuple[list[dict], str]:
+
+    if not chunks:
+        return [], "no chunks"
+
+    if len(chunks) <= top_k:
+        return (
+            chunks,
+            "all chunks (document fits retrieval limit)"
+        )
+
+    query = (
+        "recruiter employment screening policy criteria, thresholds, "
+        "exceptions, job-related requirements, verification rules, "
+        "role categories, compliance obligations and manual review"
+    )
+
+    try:
+        texts = [
+            chunk["text"]
+            for chunk in chunks
+        ]
+
+        vectors = ollama_embed(
+            texts + [query]
+        )
+
+        vectors /= (
+            np.linalg.norm(
+                vectors,
+                axis=1,
+                keepdims=True
+            ) + 1e-12
+        )
+
+        scores = vectors[:-1] @ vectors[-1]
+
+        selected = sorted(
+            np.argsort(scores)[::-1][:top_k].tolist()
+        )
+
+        return (
+            [chunks[index] for index in selected],
+            "Ollama embedding cosine similarity"
+        )
+
+    except Exception as exc:
+        terms = set(
+            re.findall(
+                r"[a-zA-Z0-9+#.]+",
+                query.lower()
+            )
+        )
+
+        ranked = []
+
+        for index, chunk in enumerate(chunks):
+            tokens = set(
+                re.findall(
+                    r"[a-zA-Z0-9+#.]+",
+                    chunk["text"].lower()
+                )
+            )
+
+            ranked.append((
+                len(terms & tokens),
+                index
+            ))
+
+        selected = sorted(
+            index
+            for _, index in sorted(
+                ranked,
+                reverse=True
+            )[:top_k]
+        )
+
+        return (
+            [chunks[index] for index in selected],
+            f"lexical fallback ({type(exc).__name__})"
+        )
+
+
+# ============================================================
+# STAGE 1: POLICY REQUIREMENT EXTRACTION
+# ============================================================
+
+def extract_policy_requirements(full_text: str) -> dict:
+    """
+    Extract explicit policy requirements from the complete PDF text.
+
+    This stage does not know about or generate the Java rule DSL.
+    """
+
+    prompt = f"""
+Extract EVERY explicit requirement from the recruiter policy.
+
+YOUR TASK:
+Policy requirement extraction only.
+
+Do not generate Java DSL rules.
+Do not decide whether requirements are supported by the Java engine.
+Do not invent requirements or missing information.
+
+EXTRACTION RULES:
+
+1. Extract every explicit policy obligation.
+2. Split compound requirements into independent requirements.
+3. Preserve the original meaning of each requirement.
+4. Capture numeric and non-numeric requirements.
+5. For a numeric requirement, extract its threshold and unit.
+6. If there is no numeric threshold, use null.
+7. Preserve the applicable role, if one is specified.
+8. Every requirement must have a verbatim evidence quote.
+9. The page number must match the supplied PDF page marker.
+10. If a requirement cannot be confidently extracted,
+    add an explanation to unresolvedItems.
+11. Do not omit procedural requirements such as verification,
+    approvals, interviews, and documentation.
+12. Do not convert recommendations into mandatory requirements.
+13. Do not infer requirements from general industry practices.
+14. Do not combine different thresholds into one requirement.
+15. Preserve the difference between mandatory language
+    ("must", "required") and advisory language ("should", "may").
+
+SPLITTING EXAMPLE:
+
+Policy:
+Engineering Manager: Minimum 8 years of relevant experience,
+including 2 years of leadership experience.
+
+This must produce TWO independent requirements:
+- Minimum 8 years of relevant experience.
+- Minimum 2 years of leadership experience.
+
+Return only the JSON structure required by the schema.
+
+POLICY TEXT:
+
+<policy>
+{full_text}
+</policy>
+"""
+
+    system_prompt = (
+        "You are a precise recruiter policy extraction engine. "
+        "Extract all explicit requirements without summarizing or "
+        "inventing information. Split compound requirements into "
+        "independent requirements. Preserve exact evidence quotes "
+        "and original PDF page numbers. Return only valid JSON "
+        "matching the supplied schema."
+    )
+
+    raw = ollama_chat(
+        prompt=prompt,
+        output_schema=EXTRACTION_SCHEMA,
+        system_prompt=system_prompt
+    )
+
+    print("\n========== STAGE 1 RAW RESPONSE ==========")
+    print(raw[:5000])
+    print("==========================================\n")
+
+    try:
+        parsed = json.loads(raw)
+
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Stage 1 returned invalid JSON: {exc}\n"
+            f"Raw response:\n{raw[:3000]}"
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "Stage 1 response must be a JSON object."
+        )
+
+    requirements = parsed.get("requirements")
+    unresolved_items = parsed.get("unresolvedItems")
+
+    if not isinstance(requirements, list):
+        raise ValueError(
+            "Stage 1 response does not contain a valid requirements array."
+        )
+
+    if not isinstance(unresolved_items, list):
+        raise ValueError(
+            "Stage 1 response does not contain a valid unresolvedItems array."
+        )
+
+    # Assign stable IDs in Python instead of trusting model-generated IDs.
+    for index, requirement in enumerate(
+        requirements,
+        start=1
+    ):
+
+        if not isinstance(requirement, dict):
+            raise ValueError(
+                f"Requirement at index {index} is not a JSON object."
+            )
+
+        requirement["id"] = f"REQ-{index:03d}"
+
+        required_fields = [
+            "category",
+            "role",
+            "requirementType",
+            "statement",
+            "threshold",
+            "unit",
+            "sourceEvidence"
+        ]
+
+        for field in required_fields:
+            if field not in requirement:
+                raise ValueError(
+                    f"{requirement['id']} is missing field: {field}"
+                )
+
+        for field in ("category", "requirementType", "statement"):
+            if not isinstance(requirement[field], str):
+                raise ValueError(
+                    f"{requirement['id']} has invalid {field}."
+                )
+
+            if not requirement[field].strip():
+                raise ValueError(
+                    f"{requirement['id']} has an empty {field}."
+                )
+
+        role = requirement["role"]
+
+        if role is not None and not isinstance(role, str):
+            raise ValueError(
+                f"{requirement['id']} has an invalid role."
+            )
+
+        unit = requirement["unit"]
+
+        if unit is not None and not isinstance(unit, str):
+            raise ValueError(
+                f"{requirement['id']} has an invalid unit."
+            )
+
+        threshold = requirement["threshold"]
+
+        if (
+            threshold is not None
+            and (
+                isinstance(threshold, bool)
+                or not isinstance(threshold, (int, float))
+            )
+        ):
+            raise ValueError(
+                f"{requirement['id']} has an invalid threshold."
+            )
+
+        evidence = requirement["sourceEvidence"]
+
+        if not isinstance(evidence, dict):
+            raise ValueError(
+                f"{requirement['id']} has invalid sourceEvidence."
+            )
+
+        quote = evidence.get("quote")
+        page = evidence.get("page")
+
+        if not isinstance(quote, str) or not quote.strip():
+            raise ValueError(
+                f"{requirement['id']} has an empty evidence quote."
+            )
+
+        if (
+            not isinstance(page, int)
+            or isinstance(page, bool)
+            or page < 1
+        ):
+            raise ValueError(
+                f"{requirement['id']} has an invalid page number."
+            )
+
+    for item in unresolved_items:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                "unresolvedItems contains an invalid or empty item."
+            )
+
+    return {
+        "requirements": requirements,
+        "unresolvedItems": unresolved_items
+    }
+
+
+def validate_extraction_evidence(
+    requirements: list[dict],
+    pages: list[dict]
+) -> list[str]:
+    """
+    Check each Stage 1 evidence quote against its claimed PDF page.
+    """
+
+    pages_by_number = {
+        page["page"]: normalize_text(page["text"])
+        for page in pages
+    }
+
+    errors = []
+
+    for requirement in requirements:
+        requirement_id = requirement.get(
+            "id",
+            "UNKNOWN"
+        )
+
+        evidence = requirement.get(
+            "sourceEvidence",
+            {}
+        )
+
+        quote = evidence.get("quote", "")
+        page_number = evidence.get("page")
+
+        if not quote:
+            errors.append(
+                f"{requirement_id}: missing evidence quote."
+            )
+            continue
+
+        page_text = pages_by_number.get(page_number)
+
+        if page_text is None:
+            errors.append(
+                f"{requirement_id}: PDF page {page_number} does not exist."
+            )
+            continue
+
+        if normalize_text(quote) not in page_text:
+            errors.append(
+                f"{requirement_id}: evidence quote was not found "
+                f"on PDF page {page_number}."
+            )
+
+    return errors
+
+
+# ============================================================
+# EXISTING JAVA DSL VALIDATION
+# ============================================================
+
+def _allowed_fields(
+    catalog: dict,
+    search_type: str | None,
+    scope: str
+) -> set[str]:
+
+    if scope == "CROSS":
+        return set(catalog.get("crossFields", []))
+
+    if scope == "ORDER":
+        return (
+            set(catalog.get("orderFields", []))
+            | set(catalog.get("globalFields", []))
+        )
+
+    # Generic PER_SEARCH rules intentionally have no searchType.
+    fields = set(catalog.get("globalFields", []))
+
+    if search_type:
+        for item in catalog.get(
+            "fieldsBySearchType",
+            {}
+        ).get(search_type, []):
+
+            if item.get("context") == "PER_SEARCH":
+                fields.add(item["path"])
+
+    fields.update({
+        "status",
+        "matchConfidence",
+        "searchType"
+    })
+
+    return fields
+
+
+def _validate_condition(
+    cond: Any,
+    allowed_fields: set[str],
+    catalog: dict,
+    errors: list[str],
+    where: str
+):
+    if not isinstance(cond, dict):
+        errors.append(
+            f"{where}: condition node must be an object"
+        )
+        return
+
+    groups = [
+        key
+        for key in ("all", "any", "not")
+        if key in cond
+    ]
+
+    if groups:
+        if len(groups) != 1 or len(cond) != 1:
+            errors.append(
+                f"{where}: use exactly one of all/any/not per group node"
+            )
+            return
+
+        key = groups[0]
+        children = cond[key]
+
+        if key in ("all", "any"):
+            if not isinstance(children, list) or not children:
+                errors.append(
+                    f"{where}: {key} must be a non-empty array"
+                )
+                return
+
+            for index, child in enumerate(children):
+                _validate_condition(
+                    child,
+                    allowed_fields,
+                    catalog,
+                    errors,
+                    f"{where}.{key}[{index}]"
+                )
+
+        else:
+            if isinstance(children, list):
+                if not children:
+                    errors.append(
+                        f"{where}: not array cannot be empty"
+                    )
+
+                for index, child in enumerate(children):
+                    _validate_condition(
+                        child,
+                        allowed_fields,
+                        catalog,
+                        errors,
+                        f"{where}.not[{index}]"
+                    )
+
+            else:
+                _validate_condition(
+                    children,
+                    allowed_fields,
+                    catalog,
+                    errors,
+                    f"{where}.not"
+                )
+
+        return
+
+    if set(cond) != {"field", "op", "value"}:
+        errors.append(
+            f"{where}: leaf condition must contain exactly field, op, value"
+        )
+        return
+
+    field = cond.get("field")
+    operator = cond.get("op")
+    value = cond.get("value")
+
+    if field not in allowed_fields:
+        errors.append(
+            f'{where}: field "{field}" is not allowed '
+            "for this scope/searchType"
+        )
+
+    if operator not in catalog.get("allowedOperators", []):
+        errors.append(
+            f'{where}: unsupported operator "{operator}"'
+        )
+
+    if isinstance(value, str) and value.startswith("$param."):
+        parameter = value.split(".", 1)[1]
+
+        if parameter not in catalog.get("parameters", []):
+            errors.append(
+                f'{where}: unknown parameter reference "{value}"'
+            )
+
+
+def validate_rule(
+    rule: dict,
+    catalog: dict,
+    reference_ids: set[str],
+    seen_ids: set[str]
+) -> list[str]:
+
+    errors: list[str] = []
+
+    if not isinstance(rule, dict):
+        return ["rule must be an object"]
+
+    required = {
+        "ruleId",
+        "name",
+        "severity",
+        "condition",
+        "title",
+        "explanationTemplate"
+    }
+
+    for key in sorted(required - set(rule)):
+        errors.append(
+            f"missing required property: {key}"
+        )
+
+    allowed_props = set(
+        catalog.get("ruleProperties", [])
+    )
+
+    for key in sorted(set(rule) - allowed_props):
+        errors.append(
+            f"unsupported rule property: {key}"
+        )
+
+    rule_id = rule.get("ruleId")
+
+    if (
+        not isinstance(rule_id, str)
+        or not re.fullmatch(
+            r"[A-Z][A-Z0-9]*-[0-9]{3,}",
+            rule_id
+        )
+    ):
+        errors.append(
+            "ruleId must look like PREFIX-001 "
+            "(uppercase prefix and at least three digits)"
+        )
+
+    elif rule_id in reference_ids:
+        errors.append(
+            f"ruleId {rule_id} already exists in the supplied baseline"
+        )
+
+    elif rule_id in seen_ids:
+        errors.append(
+            f"duplicate generated ruleId: {rule_id}"
+        )
+
+    if rule.get("severity") not in catalog.get(
+        "severityValues",
+        []
+    ):
+        errors.append(
+            f'unsupported severity: {rule.get("severity")}'
+        )
+
+    scope = rule.get("scope") or (
+        "PER_SEARCH"
+        if rule.get("searchType")
+        else None
+    )
+
+    if scope not in catalog.get("scopes", []):
+        errors.append(
+            f'scope must be one of {catalog.get("scopes", [])}; '
+            "CROSS and ORDER rules must specify scope"
+        )
+
+    search_type = rule.get("searchType")
+
+    if scope == "PER_SEARCH":
+        if (
+            search_type is not None
+            and search_type not in catalog.get("searchTypes", [])
+        ):
+            errors.append(
+                f"unknown searchType: {search_type!r}"
+            )
+
+    elif search_type is not None:
+        errors.append(
+            f"{scope} rule must not set searchType; "
+            "use scope and fully-qualified field paths"
+        )
+
+    allowed_fields = _allowed_fields(
+        catalog,
+        search_type,
+        scope or "PER_SEARCH"
+    )
+
+    _validate_condition(
+        rule.get("condition"),
+        allowed_fields,
+        catalog,
+        errors,
+        "condition"
+    )
+
+    if "requires" in rule:
+        if (
+            not isinstance(rule["requires"], list)
+            or any(
+                item not in catalog["searchTypes"]
+                for item in rule["requires"]
+            )
+        ):
+            errors.append(
+                "requires must be an array of known searchTypes"
+            )
+
+    if "evaluateOn" in rule:
+        if (
+            not isinstance(rule["evaluateOn"], list)
+            or any(
+                item not in catalog.get("evaluateOnStatuses", [])
+                for item in rule["evaluateOn"]
+            )
+        ):
+            errors.append(
+                "evaluateOn contains an unsupported status"
+            )
+
+    if (
+        "domain" in rule
+        and rule["domain"] not in catalog.get("domains", [])
+    ):
+        errors.append(
+            f'unsupported domain: {rule["domain"]}'
+        )
+
+    if "complianceFlags" in rule:
+        if not isinstance(rule["complianceFlags"], list):
+            errors.append(
+                "complianceFlags must be an array"
+            )
+        else:
+            bad = (
+                set(rule["complianceFlags"])
+                - set(catalog.get("complianceFlags", []))
+            )
+
+            if bad:
+                errors.append(
+                    f"unsupported complianceFlags: {sorted(bad)}"
+                )
+
+    if "modifiers" in rule:
+        if not isinstance(rule["modifiers"], list):
+            errors.append(
+                "modifiers must be an array"
+            )
+        else:
+            for index, modifier in enumerate(rule["modifiers"]):
+                if (
+                    not isinstance(modifier, dict)
+                    or set(modifier) != {"when", "effect"}
+                ):
+                    errors.append(
+                        f"modifiers[{index}] must contain exactly when and effect"
+                    )
+                    continue
+
+                if modifier["effect"] not in catalog.get(
+                    "modifierEffects",
+                    []
+                ):
+                    errors.append(
+                        f"modifiers[{index}]: unsupported effect "
+                        f"{modifier['effect']}"
+                    )
+
+                _validate_condition(
+                    modifier["when"],
+                    allowed_fields,
+                    catalog,
+                    errors,
+                    f"modifiers[{index}].when"
+                )
+
+    for key in (
+        "name",
+        "title",
+        "explanationTemplate"
+    ):
+        if key in rule and (
+            not isinstance(rule[key], str)
+            or not rule[key].strip()
+        ):
+            errors.append(
+                f"{key} must be a non-empty string"
+            )
+
+    if isinstance(rule_id, str) and rule_id:
+        seen_ids.add(rule_id)
+
+    return errors
+
+
+# ============================================================
+# STAGE 2: JAVA DSL COMPILATION PROMPT
+# ============================================================
+
+def _prompt(
+    catalog: dict,
+    reference_rules: list[dict],
+    excerpts: list[dict],
+    existing_ids: list[str],
+    extracted_requirements: list[dict]
+) -> str:
+
+    excerpt_text = "\n\n".join(
+        f'[PDF PAGE {item["page"]}]\n{item["text"]}'
+        for item in excerpts
+    )
+
+    return f"""
+You are a conservative compiler that maps extracted recruiter
+policy requirements to an EXISTING Java JSON rule DSL.
+
+YOUR TASK IS RULE COMPILATION ONLY.
+
+The requirements below were extracted in Stage 1.
+Treat them as the primary representation of policy meaning.
+
+RULES:
+
+1. Generate only rules supported by the authoritative catalog.
+2. Do not invent Java DSL fields, operators, search types or scopes.
+3. Do not invent thresholds or severity values.
+4. Do not convert procedural requirements into unsupported rules.
+5. Every generated rule must have exact supporting source evidence.
+6. Use the original PDF excerpts to verify evidence quotes and pages.
+7. Explain each unsupported requirement individually in unmappedPolicyItems.
+8. Do not reuse existing rule IDs.
+9. Do not make hiring, rejection, ranking or eligibility decisions.
+10. An empty rules array is allowed when no extracted requirement
+    can safely be represented.
+11. Do not treat the absence of a generated rule as proof that
+    the policy requirement does not exist.
+12. Preserve the distinction between mandatory and advisory language.
+13. Generated rules are drafts and require authorized human review.
+
+OUTPUT CONTRACT:
+
+Return one JSON object with these keys:
+- rules: array of supported Java DSL rules
+- sourceEvidence: array of ruleId, quote and page objects
+- unmappedPolicyItems: array of explanations for unsupported requirements
+- assumptions: array of assumptions, normally empty
+- reviewNotes: array of human review notes
+
+AUTHORITATIVE CATALOG:
+
+{json.dumps(catalog, ensure_ascii=False)}
+
+EXISTING RULE IDS (do not reuse):
+
+{json.dumps(existing_ids)}
+
+EXTRACTED POLICY REQUIREMENTS:
+
+{json.dumps(extracted_requirements, ensure_ascii=False)}
+
+ORIGINAL PDF EXCERPTS FOR EVIDENCE VERIFICATION:
+
+<policy>
+{excerpt_text}
+</policy>
+"""
+
+
+# ============================================================
+# COMPLETE TWO-STAGE PIPELINE
+# ============================================================
+
+def generate_rules(
+    pdf_bytes: bytes,
+    filename: str
+) -> dict:
+    """
+    Full pipeline:
+
+    1. Extract text from PDF.
+    2. Extract structured policy requirements (Stage 1).
+    3. Validate Stage 1 evidence against source PDF pages.
+    4. Compile verified requirements into Java DSL (Stage 2).
+    5. Validate generated DSL rules and their evidence.
+    6. Return generation metadata for the Streamlit UI.
+    """
+
+    # --------------------------------------------------------
+    # STEP 1: PDF TEXT EXTRACTION
+    # --------------------------------------------------------
+
+    pages = extract_pdf_pages(pdf_bytes)
+
+    print("\n========== PDF EXTRACTION ==========")
+    print("Number of extracted pages:", len(pages))
+
+    for page in pages[:3]:
+        print(f"\nPAGE: {page['page']}")
+        print("Characters:", len(page["text"]))
+        print("Preview:")
+        print(page["text"][:1000])
+
+    print("====================================\n")
+
+    if not pages:
+        raise ValueError(
+            "No selectable PDF text was found. "
+            "This build does not include OCR; convert scanned PDFs "
+            "to searchable text first."
+        )
+
+    full_text = "\n".join(
+        f'[PAGE {page["page"]}]\n{page["text"]}'
+        for page in pages
+    )
+
+    # --------------------------------------------------------
+    # STEP 2: STAGE 1 - POLICY REQUIREMENT EXTRACTION
+    # --------------------------------------------------------
+
+    print("\n========== STAGE 1: EXTRACTION ==========")
+
+    extraction = extract_policy_requirements(
+        full_text
+    )
+
+    extracted_requirements = extraction["requirements"]
+    unresolved_items = extraction["unresolvedItems"]
+
+    print(
+        "Extracted requirements:",
+        len(extracted_requirements)
+    )
+
+    for requirement in extracted_requirements:
+        print(
+            requirement["id"],
+            "|",
+            requirement["category"],
+            "|",
+            requirement["statement"]
+        )
+
+    print("\nUnresolved items:")
+    for item in unresolved_items:
+        print("-", item)
+
+    print("========================================\n")
+
+    # --------------------------------------------------------
+    # STEP 3: VALIDATE STAGE 1 EVIDENCE
+    # --------------------------------------------------------
+
+    extraction_errors = validate_extraction_evidence(
+        extracted_requirements,
+        pages
+    )
+
+    print("\n========== STAGE 1 EVIDENCE VALIDATION ==========")
+
+    for error in extraction_errors:
+        print(error)
+
+    print(
+        "Extraction evidence errors:",
+        len(extraction_errors)
+    )
+
+    print("=================================================\n")
+
+    # Only pass requirements with source quotes that were
+    # verified against the exact page claimed by the model.
+    pages_by_number = {
+        page["page"]: normalize_text(page["text"])
+        for page in pages
+    }
+
+    verified_requirements = []
+
+    for requirement in extracted_requirements:
+        evidence = requirement["sourceEvidence"]
+        page_number = evidence["page"]
+        quote = normalize_text(evidence["quote"])
+
+        page_text = pages_by_number.get(page_number, "")
+
+        if quote and quote in page_text:
+            verified_requirements.append(requirement)
+
+    # --------------------------------------------------------
+    # STEP 4: LOAD JAVA DSL CATALOG AND PREPARE RETRIEVAL
+    # --------------------------------------------------------
+
+    chunks = chunk_pages(pages)
+
+    retrieved, retrieval_mode = retrieve_chunks(chunks)
+
+    catalog = load_catalog()
+    reference_rules = load_reference_rules()
+
+    existing_ids = [
+        rule["ruleId"]
+        for rule in reference_rules
+        if isinstance(rule, dict) and "ruleId" in rule
+    ]
+
+    print("\n========== STAGE 2 INPUT ==========")
+    print("Verified requirements:", len(verified_requirements))
+    print("Retrieval mode:", retrieval_mode)
+    print("==================================\n")
+
+    # --------------------------------------------------------
+    # STEP 5: STAGE 2 - JAVA DSL RULE COMPILATION
+    # --------------------------------------------------------
+
+    prompt = _prompt(
+        catalog,
+        reference_rules,
+        retrieved,
+        existing_ids,
+        verified_requirements
+    )
+
+    print("\n========== STAGE 2 PROMPT DEBUG ==========")
+    print("Prompt characters:", len(prompt))
+    print(prompt[:3000])
+    print("==========================================\n")
+
+    raw = ollama_chat(
+        prompt=prompt,
+        output_schema=OUTPUT_SCHEMA
+    )
+
+    print("\n========== STAGE 2 OLLAMA RESPONSE ==========")
+    print(raw[:5000])
+    print("=============================================\n")
+
+    try:
+        parsed = json.loads(raw)
+
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Stage 2 returned invalid JSON: {exc}\n"
+            f"Raw response:\n{raw[:3000]}"
+        ) from exc
+
+    if (
+        not isinstance(parsed, dict)
+        or not isinstance(parsed.get("rules"), list)
+    ):
+        raise ValueError(
+            "Unexpected Stage 2 response structure. "
+            f"Top-level keys: "
+            f"{list(parsed.keys()) if isinstance(parsed, dict) else 'Not an object'}"
+        )
+
+    # --------------------------------------------------------
+    # STEP 6: VALIDATE GENERATED JAVA DSL RULES
+    # --------------------------------------------------------
+
+    seen_ids: set[str] = set()
+    reference_ids = set(existing_ids)
+    validation_errors = []
+
+    for index, rule in enumerate(parsed["rules"]):
+        rule_errors = validate_rule(
+            rule,
+            catalog,
+            reference_ids,
+            seen_ids
+        )
+
+        validation_errors.extend([
+            f'rules[{index}] ({rule.get("ruleId", "UNKNOWN")}): {error}'
+            for error in rule_errors
+        ])
+
+    # --------------------------------------------------------
+    # STEP 7: VALIDATE STAGE 2 RULE EVIDENCE
+    # --------------------------------------------------------
+
+    normalized_full_text = normalize_text(full_text)
+
+    evidence_errors = []
+
+    source_evidence = parsed.get(
+        "sourceEvidence",
+        []
+    )
+
+    if not isinstance(source_evidence, list):
+        evidence_errors.append(
+            "sourceEvidence must be an array."
+        )
+        source_evidence = []
+
+    for item in source_evidence:
+        if not isinstance(item, dict):
+            evidence_errors.append(
+                "Invalid sourceEvidence entry: expected an object."
+            )
+            continue
+
+        quote = item.get("quote", "")
+        page_number = item.get("page")
+
+        if (
+            not isinstance(quote, str)
+            or not quote.strip()
+            or normalize_text(quote) not in normalized_full_text
+        ):
+            evidence_errors.append(
+                f'{item.get("ruleId", "UNKNOWN")}: evidence quote '
+                "was not found in extracted PDF text."
+            )
+
+        if (
+            not isinstance(page_number, int)
+            or isinstance(page_number, bool)
+            or page_number < 1
+            or page_number > len(pages)
+        ):
+            evidence_errors.append(
+                f'{item.get("ruleId", "UNKNOWN")}: invalid evidence page.'
+            )
+
+    evidence_ids = {
+        item.get("ruleId")
+        for item in source_evidence
+        if isinstance(item, dict)
+    }
+
+    for rule in parsed["rules"]:
+        if not isinstance(rule, dict):
+            continue
+
+        if rule.get("ruleId") not in evidence_ids:
+            evidence_errors.append(
+                f'{rule.get("ruleId", "UNKNOWN")}: '
+                "missing sourceEvidence entry."
+            )
+
+    # --------------------------------------------------------
+    # STEP 8: PLACEHOLDER AND RESPONSE VALIDATION
+    # --------------------------------------------------------
+
+    placeholder_values = {
+        "explain why the policy cannot be represented safely",
+        "todo",
+        "n/a",
+        "not specified"
+    }
+
+    unmapped_items = parsed.get(
+        "unmappedPolicyItems",
+        []
+    )
+
+    if not isinstance(unmapped_items, list):
+        validation_errors.append(
+            "unmappedPolicyItems must be an array."
+        )
+        unmapped_items = [
+            "Invalid unmappedPolicyItems response."
+        ]
+
+    placeholder_errors = [
+        item
+        for item in unmapped_items
+        if (
+            isinstance(item, str)
+            and item.strip().casefold() in placeholder_values
+        )
+    ]
+
+    if placeholder_errors:
+        validation_errors.append(
+            "Stage 2 returned placeholder text in unmappedPolicyItems."
+        )
+
+    assumptions = parsed.get("assumptions", [])
+    review_notes = parsed.get("reviewNotes", [])
+
+    if not isinstance(assumptions, list):
+        validation_errors.append(
+            "assumptions must be an array."
+        )
+        assumptions = []
+
+    if not isinstance(review_notes, list):
+        validation_errors.append(
+            "reviewNotes must be an array."
+        )
+        review_notes = []
+
+    # --------------------------------------------------------
+    # STEP 9: DETERMINE TECHNICAL EXPORT STATUS
+    # --------------------------------------------------------
+
+    # This is a technical validation gate, not compliance approval.
+    # An empty rules array can be valid if requirements were extracted
+    # and Stage 2 explicitly explains why they are unsupported.
+    export_allowed = (
+        bool(extracted_requirements)
+        and not unresolved_items
+        and not extraction_errors
+        and not validation_errors
+        and not evidence_errors
+        and not placeholder_errors
+    )
+
+    # --------------------------------------------------------
+    # STEP 10: BUILD FINAL RESPONSE
+    # --------------------------------------------------------
+
+    generation = {
+        "schemaVersion": "2.0",
+
+        "sourceDocument": filename,
+
+        "generator": {
+            "provider": "ollama",
+            "chatModel": CHAT_MODEL,
+            "embeddingModel": EMBED_MODEL,
+            "retrieval": retrieval_mode
+        },
+
+        "humanApprovalRequired": True,
+
+        # Stage 1 results
+        "extractedRequirements": extracted_requirements,
+        "unresolvedPolicyItems": unresolved_items,
+        "extractionErrors": extraction_errors,
+
+        # Stage 2 results
+        "rules": parsed["rules"],
+        "sourceEvidence": source_evidence,
+        "unmappedPolicyItems": unmapped_items,
+        "assumptions": assumptions,
+        "reviewNotes": review_notes,
+
+        # Validation results
+        "validationErrors": validation_errors,
+        "evidenceErrors": evidence_errors,
+
+        # Technical validation only; human approval is still required.
+        "exportAllowed": export_allowed
+    }
+
+    return {
+        "generation": generation,
+        "fullText": full_text,
+        "retrievedChunks": retrieved,
+        "pageCount": len(pages)
+    }
+
+
+===== config/candidate_report_schema.json =====
+
+{
+  "source": "User-provided CandidateReportResponse DTO and ORD-1006 sample API response (redacted)",
+  "root": "data",
+  "candidateReport": {
+    "order": "application",
+    "coverage": "coverage",
+    "searchCollection": "searchTypes",
+    "integrityRisk": "risk.integrity",
+    "operationalRisk": "risk.operational"
+  },
+  "mappings": [
+    {
+      "rulePath": "attributes.<field>",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].details.<field>",
+      "availability": "direct when details contains the field"
+    },
+    {
+      "rulePath": "result",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].result",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "status",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].status",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "matchConfidence",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].matchConfidence",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "job.roleCategories",
+      "reportPath": "application.roleCategories",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "order.daysToStart",
+      "reportPath": "application.daysToStart",
+      "availability": "direct"
+    },
+    {
+      "rulePath": "order.pendingCount",
+      "reportPath": "coverage.pending.length",
+      "availability": "derived by backend adapter"
+    },
+    {
+      "rulePath": "order.notOrderedCount",
+      "reportPath": "coverage.notOrdered.length",
+      "availability": "derived by backend adapter"
+    },
+    {
+      "rulePath": "<SEARCH_TYPE>.attributes.<field>",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].details.<field>",
+      "availability": "direct when details contains the field; used by CROSS rules"
+    },
+    {
+      "rulePath": "<SEARCH_TYPE>.result",
+      "reportPath": "searchTypes[<SEARCH_TYPE>].result",
+      "availability": "direct; used by CROSS rules"
+    },
+    {
+      "rulePath": "meta.*",
+      "reportPath": null,
+      "availability": "not present in the supplied CandidateReportResponse DTO/sample; supplied by rule-engine runtime context if supported"
+    }
+  ],
+  "reportObservedDetailFields": {
+    "SANCTIONS_WATCHLIST": [
+      "listName",
+      "matchedName",
+      "matchType"
+    ],
+    "IDENTITY": [
+      "idType",
+      "ssnValid",
+      "nameMatch",
+      "dobMatch",
+      "deceasedFlag",
+      "ssnIssuedBeforeDob",
+      "multipleIdentitiesFlag"
+    ],
+    "SEX_OFFENDER": [
+      "registryState",
+      "tier",
+      "matchType"
+    ],
+    "DRUG_HEALTH": [
+      "panelType",
+      "result",
+      "mroStatus"
+    ],
+    "MVR": [
+      "licenceStatus",
+      "licenceClass",
+      "licenceClassMismatch",
+      "duiCount",
+      "totalPoints",
+      "violationsLast3y"
+    ],
+    "WORK_AUTH_I9": [
+      "everifyStatus",
+      "authStatus",
+      "documentType",
+      "daysToExpiry"
+    ],
+    "EMPLOYMENT": [
+      "titleMatch",
+      "tenureDiffDays",
+      "rehireEligible",
+      "terminatedForCause",
+      "employerContactable",
+      "fakeEmployerFlag",
+      "longestGapMonths",
+      "gapOverlapsConviction",
+      "confirmsPracticeInRole"
+    ],
+    "EDUCATION": [
+      "accredited",
+      "diplomaMillFlag",
+      "conferred",
+      "graduationDateDiffDays",
+      "institutionVerifiable"
+    ],
+    "DIGITAL_EMPLOYMENT": [
+      "payrollProvider",
+      "instantMatchesManual",
+      "discrepancyFields"
+    ],
+    "PROFESSIONAL_LICENCE": [
+      "licenceType",
+      "issuingBody",
+      "licenceStatus",
+      "daysToExpiry",
+      "hasRestrictions"
+    ],
+    "REFERENCE": [
+      "hasNegativeRemarks",
+      "rehireRecommendation",
+      "refusedToAnswer",
+      "unreachable"
+    ],
+    "CV_ANALYSIS": [
+      "claimsTotal",
+      "claimsContradicted",
+      "claimsUnverifiable"
+    ]
+  },
+  "important": "The sample report is one example, not an exhaustive list of every field the backend may emit. A field not observed in that sample is not automatically invalid."
+}
+
+
+===== config/generation_config.json =====
+
+{
+  "defaultScopeForSearchTypeRules": "PER_SEARCH",
+  "defaultChatModel": "llama3.1:8b",
+  "defaultEmbeddingModel": "nomic-embed-text",
+  "maxRetrievedChunks": 14,
+  "temperature": 0,
+  "humanApprovalRequired": true,
+  "outputFormat": "JSON array compatible with the existing Java rule engine",
+  "idPolicy": "Use a new prefix not already present in reference rules; do not overwrite existing ruleIds.",
+  "safety": "Never generate automated hire/reject/rank decisions. Do not use protected characteristics or proxies. Require human review and jurisdiction-specific compliance review."
+}
+
+
+===== config/rule_catalog.json =====
+
+{
+  "sourceOfTruth": "reference/existing_rules_reference.json (47 existing rules supplied by user)",
+  "searchTypes": [
+    "CRIMINAL",
+    "CV_ANALYSIS",
+    "DIGITAL_EMPLOYMENT",
+    "DRUG_HEALTH",
+    "EDUCATION",
+    "EMPLOYMENT",
+    "IDENTITY",
+    "MVR",
+    "PROFESSIONAL_LICENCE",
+    "REFERENCE",
+    "SANCTIONS_WATCHLIST",
+    "SEX_OFFENDER",
+    "WORK_AUTH_I9"
+  ],
+  "fieldsBySearchType": {
+    "CRIMINAL": [
+      {
+        "path": "attributes.candidateDisclosed",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.candidateDisclosed"
+      },
+      {
+        "path": "attributes.disposition",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.disposition"
+      },
+      {
+        "path": "attributes.offenceCategory",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.offenceCategory"
+      },
+      {
+        "path": "attributes.severity",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.severity"
+      },
+      {
+        "path": "attributes.yearsSinceOffence",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].details.yearsSinceOffence"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      },
+      {
+        "path": "result",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CRIMINAL].result"
+      },
+      {
+        "path": "CRIMINAL.attributes.disposition",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CRIMINAL].details.disposition"
+      },
+      {
+        "path": "CRIMINAL.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CRIMINAL].result"
+      }
+    ],
+    "CV_ANALYSIS": [
+      {
+        "path": "attributes.claimsContradicted",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CV_ANALYSIS].details.claimsContradicted"
+      },
+      {
+        "path": "attributes.claimsUnverifiable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[CV_ANALYSIS].details.claimsUnverifiable"
+      },
+      {
+        "path": "CV_ANALYSIS.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[CV_ANALYSIS].result"
+      }
+    ],
+    "DIGITAL_EMPLOYMENT": [
+      {
+        "path": "attributes.instantMatchesManual",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DIGITAL_EMPLOYMENT].details.instantMatchesManual"
+      }
+    ],
+    "DRUG_HEALTH": [
+      {
+        "path": "attributes.mroStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DRUG_HEALTH].details.mroStatus"
+      },
+      {
+        "path": "attributes.result",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[DRUG_HEALTH].details.result"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "EDUCATION": [
+      {
+        "path": "attributes.accredited",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.accredited"
+      },
+      {
+        "path": "attributes.conferred",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.conferred"
+      },
+      {
+        "path": "attributes.diplomaMillFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.diplomaMillFlag"
+      },
+      {
+        "path": "attributes.graduationDateDiffDays",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.graduationDateDiffDays"
+      },
+      {
+        "path": "attributes.institutionVerifiable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EDUCATION].details.institutionVerifiable"
+      },
+      {
+        "path": "EDUCATION.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EDUCATION].result"
+      }
+    ],
+    "EMPLOYMENT": [
+      {
+        "path": "attributes.employerContactable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.employerContactable"
+      },
+      {
+        "path": "attributes.fakeEmployerFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.fakeEmployerFlag"
+      },
+      {
+        "path": "attributes.longestGapMonths",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.longestGapMonths"
+      },
+      {
+        "path": "attributes.rehireEligible",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.rehireEligible"
+      },
+      {
+        "path": "attributes.tenureDiffDays",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.tenureDiffDays"
+      },
+      {
+        "path": "attributes.terminatedForCause",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.terminatedForCause"
+      },
+      {
+        "path": "attributes.titleMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[EMPLOYMENT].details.titleMatch"
+      },
+      {
+        "path": "EMPLOYMENT.attributes.confirmsPracticeInRole",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].details.confirmsPracticeInRole"
+      },
+      {
+        "path": "EMPLOYMENT.attributes.gapOverlapsConviction",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].details.gapOverlapsConviction"
+      },
+      {
+        "path": "EMPLOYMENT.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[EMPLOYMENT].result"
+      }
+    ],
+    "IDENTITY": [
+      {
+        "path": "attributes.deceasedFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.deceasedFlag"
+      },
+      {
+        "path": "attributes.dobMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.dobMatch"
+      },
+      {
+        "path": "attributes.multipleIdentitiesFlag",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.multipleIdentitiesFlag"
+      },
+      {
+        "path": "attributes.nameMatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.nameMatch"
+      },
+      {
+        "path": "attributes.ssnIssuedBeforeDob",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.ssnIssuedBeforeDob"
+      },
+      {
+        "path": "attributes.ssnValid",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[IDENTITY].details.ssnValid"
+      },
+      {
+        "path": "IDENTITY.attributes.dobMatch",
+        "context": "CROSS",
+        "reportPath": "searchTypes[IDENTITY].details.dobMatch"
+      },
+      {
+        "path": "IDENTITY.attributes.nameMatch",
+        "context": "CROSS",
+        "reportPath": "searchTypes[IDENTITY].details.nameMatch"
+      }
+    ],
+    "MVR": [
+      {
+        "path": "attributes.duiCount",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.duiCount"
+      },
+      {
+        "path": "attributes.licenceClassMismatch",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.licenceClassMismatch"
+      },
+      {
+        "path": "attributes.licenceStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.licenceStatus"
+      },
+      {
+        "path": "attributes.totalPoints",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.totalPoints"
+      },
+      {
+        "path": "attributes.violationsLast3y",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.violationsLast3y"
+      },
+      {
+        "path": "attributes.yearsSinceLastDui",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[MVR].details.yearsSinceLastDui"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "PROFESSIONAL_LICENCE": [
+      {
+        "path": "attributes.daysToExpiry",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.daysToExpiry"
+      },
+      {
+        "path": "attributes.hasRestrictions",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.hasRestrictions"
+      },
+      {
+        "path": "attributes.licenceStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.licenceStatus"
+      },
+      {
+        "path": "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+        "context": "CROSS",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].details.licenceStatus"
+      },
+      {
+        "path": "PROFESSIONAL_LICENCE.result",
+        "context": "CROSS",
+        "reportPath": "searchTypes[PROFESSIONAL_LICENCE].result"
+      }
+    ],
+    "REFERENCE": [
+      {
+        "path": "attributes.hasNegativeRemarks",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.hasNegativeRemarks"
+      },
+      {
+        "path": "attributes.refusedToAnswer",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.refusedToAnswer"
+      },
+      {
+        "path": "attributes.rehireRecommendation",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.rehireRecommendation"
+      },
+      {
+        "path": "attributes.unreachable",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[REFERENCE].details.unreachable"
+      }
+    ],
+    "SANCTIONS_WATCHLIST": [
+      {
+        "path": "attributes.listName",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SANCTIONS_WATCHLIST].details.listName"
+      },
+      {
+        "path": "attributes.matchType",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SANCTIONS_WATCHLIST].details.matchType"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "SEX_OFFENDER": [
+      {
+        "path": "attributes.matchType",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[SEX_OFFENDER].details.matchType"
+      },
+      {
+        "path": "job.roleCategories",
+        "context": "PER_SEARCH",
+        "reportPath": "application.roleCategories"
+      }
+    ],
+    "WORK_AUTH_I9": [
+      {
+        "path": "attributes.authStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.authStatus"
+      },
+      {
+        "path": "attributes.daysToExpiry",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.daysToExpiry"
+      },
+      {
+        "path": "attributes.everifyStatus",
+        "context": "PER_SEARCH",
+        "reportPath": "searchTypes[WORK_AUTH_I9].details.everifyStatus"
+      }
+    ]
+  },
+  "crossFields": [
+    "CRIMINAL.attributes.disposition",
+    "CRIMINAL.result",
+    "CV_ANALYSIS.result",
+    "EDUCATION.result",
+    "EMPLOYMENT.attributes.confirmsPracticeInRole",
+    "EMPLOYMENT.attributes.gapOverlapsConviction",
+    "EMPLOYMENT.result",
+    "IDENTITY.attributes.dobMatch",
+    "IDENTITY.attributes.nameMatch",
+    "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+    "PROFESSIONAL_LICENCE.result"
+  ],
+  "orderFields": [
+    "order.daysToStart",
+    "order.notOrderedCount",
+    "order.pendingCount"
+  ],
+  "globalFields": [
+    "matchConfidence",
+    "meta.overdue",
+    "meta.reportAgeDays",
+    "meta.retryCount",
+    "status"
+  ],
+  "allowedOperators": [
+    "contains",
+    "containsAny",
+    "eq",
+    "gt",
+    "gte",
+    "in",
+    "lt",
+    "lte"
+  ],
+  "conditionGrammar": {
+    "leaf": {
+      "field": "string",
+      "op": "allowed operator",
+      "value": "JSON scalar/array or $param.name"
+    },
+    "groups": [
+      "all",
+      "any",
+      "not"
+    ],
+    "notShape": "not may contain one condition object or an array of conditions"
+  },
+  "scopes": [
+    "CROSS",
+    "ORDER",
+    "PER_SEARCH"
+  ],
+  "severityValues": [
+    "HIGH",
+    "LOW",
+    "MEDIUM"
+  ],
+  "domains": [
+    "INTEGRITY",
+    "OPERATIONAL"
+  ],
+  "complianceFlags": [
+    "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+    "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+  ],
+  "parameters": [
+    "criminalLookbackYears",
+    "employmentGapMonths",
+    "maxReportAgeDays",
+    "minMatchConfidence",
+    "mvrMaxPoints",
+    "startBufferDays"
+  ],
+  "evaluateOnStatuses": [
+    "COMPLETED",
+    "IN_PROGRESS",
+    "ORDERED",
+    "UNABLE_TO_VERIFY"
+  ],
+  "supportedOptionalProperties": [
+    "domain",
+    "scope",
+    "requires",
+    "evaluateOn",
+    "modifiers",
+    "complianceFlags"
+  ],
+  "modifierEffects": [
+    "ESCALATE"
+  ],
+  "ruleProperties": [
+    "ruleId",
+    "name",
+    "domain",
+    "scope",
+    "searchType",
+    "requires",
+    "evaluateOn",
+    "severity",
+    "condition",
+    "modifiers",
+    "title",
+    "explanationTemplate",
+    "complianceFlags"
+  ],
+  "enumValuesByField": {
+    "CRIMINAL.attributes.disposition": [
+      "CONVICTED"
+    ],
+    "CRIMINAL.result": [
+      "RECORD_FOUND"
+    ],
+    "CV_ANALYSIS.result": [
+      "DISCREPANCY"
+    ],
+    "EDUCATION.result": [
+      "DISCREPANCY"
+    ],
+    "EMPLOYMENT.attributes.confirmsPracticeInRole": [
+      true
+    ],
+    "EMPLOYMENT.attributes.gapOverlapsConviction": [
+      true
+    ],
+    "EMPLOYMENT.result": [
+      "DISCREPANCY"
+    ],
+    "IDENTITY.attributes.dobMatch": [
+      false
+    ],
+    "IDENTITY.attributes.nameMatch": [
+      false
+    ],
+    "PROFESSIONAL_LICENCE.attributes.licenceStatus": [
+      "EXPIRED"
+    ],
+    "PROFESSIONAL_LICENCE.result": [
+      "DISCREPANCY"
+    ],
+    "attributes.accredited": [
+      false
+    ],
+    "attributes.authStatus": [
+      "EXPIRED"
+    ],
+    "attributes.candidateDisclosed": [
+      false
+    ],
+    "attributes.claimsContradicted": [
+      3
+    ],
+    "attributes.claimsUnverifiable": [
+      1
+    ],
+    "attributes.conferred": [
+      false
+    ],
+    "attributes.daysToExpiry": [
+      0,
+      60,
+      90
+    ],
+    "attributes.deceasedFlag": [
+      true
+    ],
+    "attributes.diplomaMillFlag": [
+      true
+    ],
+    "attributes.disposition": [
+      "CONVICTED",
+      "PENDING"
+    ],
+    "attributes.dobMatch": [
+      false
+    ],
+    "attributes.duiCount": [
+      1
+    ],
+    "attributes.employerContactable": [
+      false
+    ],
+    "attributes.everifyStatus": [
+      "FNC",
+      "TNC"
+    ],
+    "attributes.fakeEmployerFlag": [
+      true
+    ],
+    "attributes.graduationDateDiffDays": [
+      0,
+      180,
+      90
+    ],
+    "attributes.hasNegativeRemarks": [
+      true
+    ],
+    "attributes.hasRestrictions": [
+      true
+    ],
+    "attributes.instantMatchesManual": [
+      false
+    ],
+    "attributes.institutionVerifiable": [
+      false
+    ],
+    "attributes.licenceClassMismatch": [
+      true
+    ],
+    "attributes.licenceStatus": [
+      "EXPIRED"
+    ],
+    "attributes.matchType": [
+      "EXACT",
+      "POTENTIAL"
+    ],
+    "attributes.mroStatus": [
+      "PENDING",
+      "VERIFIED_LEGIT"
+    ],
+    "attributes.multipleIdentitiesFlag": [
+      true
+    ],
+    "attributes.nameMatch": [
+      false
+    ],
+    "attributes.refusedToAnswer": [
+      true
+    ],
+    "attributes.rehireEligible": [
+      false
+    ],
+    "attributes.rehireRecommendation": [
+      "NO"
+    ],
+    "attributes.result": [
+      "DILUTE"
+    ],
+    "attributes.severity": [
+      "FELONY",
+      "MISDEMEANOR"
+    ],
+    "attributes.ssnIssuedBeforeDob": [
+      true
+    ],
+    "attributes.ssnValid": [
+      false
+    ],
+    "attributes.tenureDiffDays": [
+      0,
+      30,
+      90
+    ],
+    "attributes.terminatedForCause": [
+      true
+    ],
+    "attributes.titleMatch": [
+      false
+    ],
+    "attributes.unreachable": [
+      true
+    ],
+    "attributes.violationsLast3y": [
+      3
+    ],
+    "attributes.yearsSinceLastDui": [
+      5
+    ],
+    "job.roleCategories": [
+      "CHILD_FACING",
+      "DRIVING",
+      "HEALTHCARE"
+    ],
+    "meta.overdue": [
+      true
+    ],
+    "meta.retryCount": [
+      3
+    ],
+    "order.daysToStart": [
+      0
+    ],
+    "order.notOrderedCount": [
+      0
+    ],
+    "order.pendingCount": [
+      0
+    ],
+    "result": [
+      "RECORD_FOUND"
+    ],
+    "status": [
+      "UNABLE_TO_VERIFY"
+    ]
+  },
+  "notes": [
+    "Fields/operators/values are extracted from the supplied existing rules, not invented.",
+    "A field may be valid in the rule engine but not directly exposed by the sample report; runtime context may supply meta.* values.",
+    "When a policy threshold or field cannot be represented, report it as unmapped rather than guessing."
+  ]
+}
+
+
+===== reference/existing_rules_reference.json =====
+
+[
+  {
+    "ruleId": "SANC-001",
+    "name": "Exact sanctions or watchlist match",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "EXACT"
+    },
+    "title": "Exact sanctions / watchlist match",
+    "explanationTemplate": "Exact match on {attributes.listName} for {attributes.matchedName}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "SANC-002",
+    "name": "Potential sanctions match needs review",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "POTENTIAL"
+    },
+    "title": "Potential sanctions match",
+    "explanationTemplate": "Possible (name-based) match on {attributes.listName} for {attributes.matchedName}. Needs manual disposition to rule out a false positive."
+  },
+  {
+    "ruleId": "SANC-003",
+    "name": "Federal exclusion hit for a healthcare role",
+    "searchType": "SANCTIONS_WATCHLIST",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.listName",
+          "op": "in",
+          "value": [
+            "OIG",
+            "LEIE",
+            "SAM"
+          ]
+        },
+        {
+          "field": "attributes.matchType",
+          "op": "eq",
+          "value": "EXACT"
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "HEALTHCARE"
+        }
+      ]
+    },
+    "title": "Federal exclusion hit for a healthcare role",
+    "explanationTemplate": "Exact match on {attributes.listName} for a healthcare role. Excluded individuals generally cannot be employed in federally funded healthcare."
+  },
+  {
+    "ruleId": "SOR-001",
+    "name": "Sex offender registry match",
+    "searchType": "SEX_OFFENDER",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "EXACT"
+    },
+    "title": "Sex offender registry match",
+    "explanationTemplate": "Registry match in {attributes.registryState}, tier {attributes.tier}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "SOR-002",
+    "name": "Possible sex offender registry match",
+    "searchType": "SEX_OFFENDER",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.matchType",
+      "op": "eq",
+      "value": "POTENTIAL"
+    },
+    "modifiers": [
+      {
+        "when": {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "CHILD_FACING"
+        },
+        "effect": "ESCALATE"
+      }
+    ],
+    "title": "Possible sex offender registry match",
+    "explanationTemplate": "Partial (name or date of birth) match in {attributes.registryState}. Needs manual review; escalated for child-facing roles."
+  },
+  {
+    "ruleId": "ID-001",
+    "name": "Identity invalid or synthetic",
+    "searchType": "IDENTITY",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.ssnValid",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.deceasedFlag",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.ssnIssuedBeforeDob",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.multipleIdentitiesFlag",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Identity could not be validated",
+    "explanationTemplate": "SSN trace flagged: valid={attributes.ssnValid}, deceased={attributes.deceasedFlag}, issuedBeforeDob={attributes.ssnIssuedBeforeDob}, multipleIdentities={attributes.multipleIdentitiesFlag}."
+  },
+  {
+    "ruleId": "ID-002",
+    "name": "Name or date of birth mismatch",
+    "searchType": "IDENTITY",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.nameMatch",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.dobMatch",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Identity details do not match",
+    "explanationTemplate": "Candidate-supplied details differ from the source: nameMatch={attributes.nameMatch}, dobMatch={attributes.dobMatch}."
+  },
+  {
+    "ruleId": "CRIM-001",
+    "name": "Felony conviction within lookback period",
+    "searchType": "CRIMINAL",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.severity",
+          "op": "eq",
+          "value": "FELONY"
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "eq",
+          "value": "CONVICTED"
+        },
+        {
+          "field": "attributes.yearsSinceOffence",
+          "op": "lte",
+          "value": "$param.criminalLookbackYears"
+        }
+      ]
+    },
+    "title": "Felony conviction on record",
+    "explanationTemplate": "{attributes.offenceCategory} felony, offence date {attributes.offenceDate}, within the {param.criminalLookbackYears}-year lookback.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-002",
+    "name": "Record found that the candidate did not disclose",
+    "searchType": "CRIMINAL",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "result",
+          "op": "eq",
+          "value": "RECORD_FOUND"
+        },
+        {
+          "field": "attributes.candidateDisclosed",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Undisclosed criminal record",
+    "explanationTemplate": "A {attributes.severity} record ({attributes.offenceCategory}, {attributes.jurisdictionState}) was found but the candidate did not disclose it.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED",
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-003",
+    "name": "Misdemeanor within lookback, or pending case",
+    "searchType": "CRIMINAL",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.severity",
+              "op": "eq",
+              "value": "MISDEMEANOR"
+            },
+            {
+              "field": "attributes.disposition",
+              "op": "eq",
+              "value": "CONVICTED"
+            },
+            {
+              "field": "attributes.yearsSinceOffence",
+              "op": "lte",
+              "value": "$param.criminalLookbackYears"
+            }
+          ]
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "eq",
+          "value": "PENDING"
+        }
+      ]
+    },
+    "modifiers": [
+      {
+        "when": {
+          "all": [
+            {
+              "field": "job.roleCategories",
+              "op": "containsAny",
+              "value": [
+                "FINANCE",
+                "CHILD_FACING"
+              ]
+            },
+            {
+              "field": "attributes.offenceCategory",
+              "op": "in",
+              "value": [
+                "FRAUD",
+                "THEFT",
+                "SEXUAL",
+                "VIOLENCE"
+              ]
+            }
+          ]
+        },
+        "effect": "ESCALATE"
+      }
+    ],
+    "title": "Misdemeanor or pending criminal case",
+    "explanationTemplate": "{attributes.severity} ({attributes.offenceCategory}), disposition {attributes.disposition}, {attributes.yearsSinceOffence} years ago. Escalated when the offence is relevant to a finance or child-facing role.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "CRIM-004",
+    "name": "Older conviction or dismissed case",
+    "searchType": "CRIMINAL",
+    "severity": "LOW",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.disposition",
+              "op": "eq",
+              "value": "CONVICTED"
+            },
+            {
+              "field": "attributes.yearsSinceOffence",
+              "op": "gt",
+              "value": "$param.criminalLookbackYears"
+            }
+          ]
+        },
+        {
+          "field": "attributes.disposition",
+          "op": "in",
+          "value": [
+            "DISMISSED",
+            "ACQUITTED"
+          ]
+        }
+      ]
+    },
+    "title": "Older conviction or dismissed case",
+    "explanationTemplate": "Disposition {attributes.disposition}, {attributes.yearsSinceOffence} years since the offence (lookback {param.criminalLookbackYears} years)."
+  },
+  {
+    "ruleId": "DRUG-001",
+    "name": "Positive or refused drug test on a safety-sensitive or driving role",
+    "searchType": "DRUG_HEALTH",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.result",
+          "op": "in",
+          "value": [
+            "POSITIVE",
+            "REFUSED"
+          ]
+        },
+        {
+          "not": {
+            "field": "attributes.mroStatus",
+            "op": "eq",
+            "value": "VERIFIED_LEGIT"
+          }
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "containsAny",
+          "value": [
+            "SAFETY_SENSITIVE",
+            "DRIVING"
+          ]
+        }
+      ]
+    },
+    "title": "Failed or refused drug test (safety-sensitive role)",
+    "explanationTemplate": "Drug test result {attributes.result}, MRO status {attributes.mroStatus}, for a safety-sensitive or driving role.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "DRUG-002",
+    "name": "Dilute result or MRO review pending",
+    "searchType": "DRUG_HEALTH",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.result",
+          "op": "eq",
+          "value": "DILUTE"
+        },
+        {
+          "field": "attributes.mroStatus",
+          "op": "eq",
+          "value": "PENDING"
+        }
+      ]
+    },
+    "title": "Dilute drug test or MRO review pending",
+    "explanationTemplate": "Result {attributes.result}, MRO status {attributes.mroStatus}."
+  },
+  {
+    "ruleId": "DRUG-003",
+    "name": "Positive or refused drug test (other roles)",
+    "searchType": "DRUG_HEALTH",
+    "severity": "MEDIUM",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.result",
+          "op": "in",
+          "value": [
+            "POSITIVE",
+            "REFUSED"
+          ]
+        },
+        {
+          "not": {
+            "field": "attributes.mroStatus",
+            "op": "eq",
+            "value": "VERIFIED_LEGIT"
+          }
+        },
+        {
+          "not": {
+            "field": "job.roleCategories",
+            "op": "containsAny",
+            "value": [
+              "SAFETY_SENSITIVE",
+              "DRIVING"
+            ]
+          }
+        }
+      ]
+    },
+    "title": "Failed or refused drug test",
+    "explanationTemplate": "Drug test result {attributes.result}, MRO status {attributes.mroStatus}."
+  },
+  {
+    "ruleId": "MVR-001",
+    "name": "Recent DUI or suspended licence on a driving role",
+    "searchType": "MVR",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "any": [
+            {
+              "all": [
+                {
+                  "field": "attributes.duiCount",
+                  "op": "gte",
+                  "value": 1
+                },
+                {
+                  "field": "attributes.yearsSinceLastDui",
+                  "op": "lte",
+                  "value": 5
+                }
+              ]
+            },
+            {
+              "field": "attributes.licenceStatus",
+              "op": "in",
+              "value": [
+                "SUSPENDED",
+                "REVOKED"
+              ]
+            }
+          ]
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "DRIVING"
+        }
+      ]
+    },
+    "title": "DUI or licence suspension (driving role)",
+    "explanationTemplate": "{attributes.duiCount} DUI(s), last one {attributes.yearsSinceLastDui} years ago; licence status {attributes.licenceStatus}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "MVR-002",
+    "name": "High points or repeated moving violations",
+    "searchType": "MVR",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.totalPoints",
+          "op": "gt",
+          "value": "$param.mvrMaxPoints"
+        },
+        {
+          "field": "attributes.violationsLast3y",
+          "op": "gte",
+          "value": 3
+        }
+      ]
+    },
+    "title": "Driving record points or violations above threshold",
+    "explanationTemplate": "{attributes.totalPoints} points (limit {param.mvrMaxPoints}); {attributes.violationsLast3y} moving violations in the last 3 years."
+  },
+  {
+    "ruleId": "MVR-003",
+    "name": "Licence class does not match the role",
+    "domain": "OPERATIONAL",
+    "searchType": "MVR",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.licenceClassMismatch",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "job.roleCategories",
+          "op": "contains",
+          "value": "DRIVING"
+        }
+      ]
+    },
+    "title": "Licence class mismatch for a driving role",
+    "explanationTemplate": "Candidate holds class {attributes.licenceClass}, which does not meet the requirement of the role."
+  },
+  {
+    "ruleId": "WA-001",
+    "name": "E-Verify final non-confirmation or expired authorization",
+    "searchType": "WORK_AUTH_I9",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.everifyStatus",
+          "op": "eq",
+          "value": "FNC"
+        },
+        {
+          "field": "attributes.authStatus",
+          "op": "eq",
+          "value": "EXPIRED"
+        }
+      ]
+    },
+    "title": "Work authorization not confirmed or expired",
+    "explanationTemplate": "E-Verify status {attributes.everifyStatus}; authorization status {attributes.authStatus}."
+  },
+  {
+    "ruleId": "WA-002",
+    "name": "E-Verify tentative non-confirmation or authorization expiring soon",
+    "domain": "OPERATIONAL",
+    "searchType": "WORK_AUTH_I9",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.everifyStatus",
+          "op": "eq",
+          "value": "TNC"
+        },
+        {
+          "all": [
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "gte",
+              "value": 0
+            },
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "lte",
+              "value": 90
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Work authorization needs follow-up",
+    "explanationTemplate": "E-Verify status {attributes.everifyStatus}; {attributes.daysToExpiry} days until authorization expires."
+  },
+  {
+    "ruleId": "EMP-001",
+    "name": "Fake or shell employer",
+    "searchType": "EMPLOYMENT",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.fakeEmployerFlag",
+      "op": "eq",
+      "value": true
+    },
+    "title": "Employer appears fake or a shell company",
+    "explanationTemplate": "The declared employer could not be validated as a real business.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "EMP-002",
+    "name": "Ineligible for rehire or terminated for cause",
+    "searchType": "EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.rehireEligible",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.terminatedForCause",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Previous employer would not rehire / terminated for cause",
+    "explanationTemplate": "Rehire eligible: {attributes.rehireEligible}; terminated for cause: {attributes.terminatedForCause}."
+  },
+  {
+    "ruleId": "EMP-003",
+    "name": "Title inflation or large tenure discrepancy",
+    "searchType": "EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.titleMatch",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "gt",
+          "value": 90
+        }
+      ]
+    },
+    "title": "Employment details differ from what was declared",
+    "explanationTemplate": "Title matches: {attributes.titleMatch}; tenure differs by {attributes.tenureDiffDays} days."
+  },
+  {
+    "ruleId": "EMP-004",
+    "name": "Employment gap above threshold",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.longestGapMonths",
+      "op": "gt",
+      "value": "$param.employmentGapMonths"
+    },
+    "title": "Unexplained employment gap",
+    "explanationTemplate": "Longest gap is {attributes.longestGapMonths} months (threshold {param.employmentGapMonths})."
+  },
+  {
+    "ruleId": "EMP-005",
+    "name": "Minor tenure discrepancy",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "attributes.tenureDiffDays",
+          "op": "lte",
+          "value": 30
+        }
+      ]
+    },
+    "title": "Minor tenure discrepancy",
+    "explanationTemplate": "Employment dates differ from the declared dates by {attributes.tenureDiffDays} days."
+  },
+  {
+    "ruleId": "EMP-006",
+    "name": "Employer could not be reached",
+    "domain": "OPERATIONAL",
+    "searchType": "EMPLOYMENT",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.employerContactable",
+      "op": "eq",
+      "value": false
+    },
+    "title": "Employer could not be contacted",
+    "explanationTemplate": "The employer was unreachable or refused to verify, so the claim is unconfirmed."
+  },
+  {
+    "ruleId": "EDU-001",
+    "name": "Diploma mill, unaccredited institution or degree not conferred",
+    "searchType": "EDUCATION",
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.diplomaMillFlag",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.accredited",
+          "op": "eq",
+          "value": false
+        },
+        {
+          "field": "attributes.conferred",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Education credential not valid",
+    "explanationTemplate": "Diploma mill: {attributes.diplomaMillFlag}; accredited: {attributes.accredited}; degree conferred: {attributes.conferred}.",
+    "complianceFlags": [
+      "PRE_ADVERSE_ACTION_NOTICE_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "EDU-002",
+    "name": "Large date mismatch or unverifiable institution",
+    "searchType": "EDUCATION",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "gt",
+          "value": 180
+        },
+        {
+          "field": "attributes.institutionVerifiable",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "title": "Education details could not be fully confirmed",
+    "explanationTemplate": "Graduation date differs by {attributes.graduationDateDiffDays} days; institution verifiable: {attributes.institutionVerifiable}."
+  },
+  {
+    "ruleId": "EDU-003",
+    "name": "Minor graduation date discrepancy",
+    "searchType": "EDUCATION",
+    "severity": "LOW",
+    "condition": {
+      "all": [
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "field": "attributes.graduationDateDiffDays",
+          "op": "lte",
+          "value": 90
+        }
+      ]
+    },
+    "title": "Minor education date discrepancy",
+    "explanationTemplate": "Graduation date differs by {attributes.graduationDateDiffDays} days."
+  },
+  {
+    "ruleId": "DIGI-001",
+    "name": "Instant vs manual employment verification conflict",
+    "domain": "OPERATIONAL",
+    "searchType": "DIGITAL_EMPLOYMENT",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.instantMatchesManual",
+      "op": "eq",
+      "value": false
+    },
+    "title": "Instant and manual employment data conflict",
+    "explanationTemplate": "Payroll-network data from {attributes.payrollProvider} conflicts with manual verification on: {attributes.discrepancyFields}."
+  },
+  {
+    "ruleId": "LIC-001",
+    "name": "Licence revoked or suspended",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.licenceStatus",
+      "op": "in",
+      "value": [
+        "REVOKED",
+        "SUSPENDED"
+      ]
+    },
+    "title": "Professional licence revoked or suspended",
+    "explanationTemplate": "{attributes.licenceType} licence from {attributes.issuingBody} is {attributes.licenceStatus}."
+  },
+  {
+    "ruleId": "LIC-002",
+    "name": "Licence expiring soon or restricted",
+    "domain": "OPERATIONAL",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "gte",
+              "value": 0
+            },
+            {
+              "field": "attributes.daysToExpiry",
+              "op": "lte",
+              "value": 60
+            }
+          ]
+        },
+        {
+          "field": "attributes.hasRestrictions",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Licence expiring soon or has restrictions",
+    "explanationTemplate": "{attributes.daysToExpiry} days until expiry; restrictions present: {attributes.hasRestrictions}."
+  },
+  {
+    "ruleId": "LIC-003",
+    "name": "Licence expired",
+    "searchType": "PROFESSIONAL_LICENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "attributes.licenceStatus",
+      "op": "eq",
+      "value": "EXPIRED"
+    },
+    "title": "Professional licence expired",
+    "explanationTemplate": "{attributes.licenceType} licence from {attributes.issuingBody} has expired."
+  },
+  {
+    "ruleId": "REF-001",
+    "name": "Negative reference",
+    "searchType": "REFERENCE",
+    "severity": "MEDIUM",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.hasNegativeRemarks",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.rehireRecommendation",
+          "op": "eq",
+          "value": "NO"
+        }
+      ]
+    },
+    "title": "Negative reference",
+    "explanationTemplate": "Negative remarks: {attributes.hasNegativeRemarks}; rehire recommendation: {attributes.rehireRecommendation}."
+  },
+  {
+    "ruleId": "REF-002",
+    "name": "Reference unreachable or declined",
+    "domain": "OPERATIONAL",
+    "searchType": "REFERENCE",
+    "severity": "LOW",
+    "condition": {
+      "any": [
+        {
+          "field": "attributes.refusedToAnswer",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "attributes.unreachable",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Reference could not be obtained",
+    "explanationTemplate": "The reference was unreachable or declined to answer. This is not an adverse finding on its own."
+  },
+  {
+    "ruleId": "CVA-001",
+    "name": "Multiple contradicted resume claims",
+    "searchType": "CV_ANALYSIS",
+    "severity": "HIGH",
+    "condition": {
+      "field": "attributes.claimsContradicted",
+      "op": "gte",
+      "value": 3
+    },
+    "title": "Resume contradicted by verified data",
+    "explanationTemplate": "{attributes.claimsContradicted} of {attributes.claimsTotal} resume claims were contradicted by verification."
+  },
+  {
+    "ruleId": "CVA-002",
+    "name": "Unverifiable resume claims",
+    "searchType": "CV_ANALYSIS",
+    "severity": "LOW",
+    "condition": {
+      "field": "attributes.claimsUnverifiable",
+      "op": "gte",
+      "value": 1
+    },
+    "title": "Some resume claims could not be verified",
+    "explanationTemplate": "{attributes.claimsUnverifiable} resume claim(s) could not be verified."
+  },
+  {
+    "ruleId": "X-001",
+    "name": "Identity mismatch plus another discrepancy",
+    "scope": "CROSS",
+    "requires": [
+      "IDENTITY"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "any": [
+            {
+              "field": "IDENTITY.attributes.nameMatch",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "field": "IDENTITY.attributes.dobMatch",
+              "op": "eq",
+              "value": false
+            }
+          ]
+        },
+        {
+          "any": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "CRIMINAL.result",
+              "op": "eq",
+              "value": "RECORD_FOUND"
+            },
+            {
+              "field": "CV_ANALYSIS.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Possible impersonation or identity mix-up",
+    "explanationTemplate": "An identity mismatch appears together with another discrepancy (employment: {EMPLOYMENT.result}, education: {EDUCATION.result}, criminal: {CRIMINAL.result})."
+  },
+  {
+    "ruleId": "X-002",
+    "name": "Discrepancies across employment, education and licence",
+    "scope": "CROSS",
+    "requires": [
+      "EMPLOYMENT",
+      "EDUCATION"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "any": [
+        {
+          "all": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        },
+        {
+          "all": [
+            {
+              "field": "EMPLOYMENT.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "PROFESSIONAL_LICENCE.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        },
+        {
+          "all": [
+            {
+              "field": "EDUCATION.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            },
+            {
+              "field": "PROFESSIONAL_LICENCE.result",
+              "op": "eq",
+              "value": "DISCREPANCY"
+            }
+          ]
+        }
+      ]
+    },
+    "title": "Possible fabrication pattern",
+    "explanationTemplate": "At least two of employment, education and licence verification show discrepancies, which can indicate a pattern of inflated claims."
+  },
+  {
+    "ruleId": "X-003",
+    "name": "Employment gap overlaps a conviction",
+    "scope": "CROSS",
+    "requires": [
+      "EMPLOYMENT",
+      "CRIMINAL"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "all": [
+        {
+          "field": "EMPLOYMENT.attributes.gapOverlapsConviction",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "field": "CRIMINAL.attributes.disposition",
+          "op": "eq",
+          "value": "CONVICTED"
+        }
+      ]
+    },
+    "title": "Employment gap overlaps a conviction",
+    "explanationTemplate": "An employment gap coincides with the period of a conviction or sentence.",
+    "complianceFlags": [
+      "INDIVIDUALIZED_ASSESSMENT_ADVISED"
+    ]
+  },
+  {
+    "ruleId": "X-004",
+    "name": "Licence expired but employer confirms practice",
+    "scope": "CROSS",
+    "requires": [
+      "PROFESSIONAL_LICENCE",
+      "EMPLOYMENT"
+    ],
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "PROFESSIONAL_LICENCE.attributes.licenceStatus",
+          "op": "eq",
+          "value": "EXPIRED"
+        },
+        {
+          "field": "EMPLOYMENT.attributes.confirmsPracticeInRole",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    "title": "Practised with an expired licence",
+    "explanationTemplate": "The licence is expired, but the previous employer confirms the candidate was practising in that role."
+  },
+  {
+    "ruleId": "OPS-001",
+    "name": "Verification overdue",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "ORDERED",
+      "IN_PROGRESS"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "meta.overdue",
+      "op": "eq",
+      "value": true
+    },
+    "title": "Verification is overdue",
+    "explanationTemplate": "{searchType} has been pending {meta.hoursPending}h against an expected {meta.slaHours}h turnaround."
+  },
+  {
+    "ruleId": "OPS-002",
+    "name": "Start date at risk",
+    "domain": "OPERATIONAL",
+    "scope": "ORDER",
+    "severity": "HIGH",
+    "condition": {
+      "all": [
+        {
+          "field": "order.daysToStart",
+          "op": "gte",
+          "value": 0
+        },
+        {
+          "field": "order.daysToStart",
+          "op": "lte",
+          "value": "$param.startBufferDays"
+        },
+        {
+          "field": "order.pendingCount",
+          "op": "gt",
+          "value": 0
+        }
+      ]
+    },
+    "title": "Start date at risk: checks still incomplete",
+    "explanationTemplate": "{order.pendingCount} check(s) are still incomplete and the start date is {order.daysToStart} day(s) away (buffer {param.startBufferDays} days)."
+  },
+  {
+    "ruleId": "OPS-003",
+    "name": "Expected checks were not ordered",
+    "domain": "OPERATIONAL",
+    "scope": "ORDER",
+    "severity": "LOW",
+    "condition": {
+      "field": "order.notOrderedCount",
+      "op": "gt",
+      "value": 0
+    },
+    "title": "Expected checks were not ordered",
+    "explanationTemplate": "{order.notOrderedCount} search(es) expected for this job were not ordered, so the report has coverage gaps."
+  },
+  {
+    "ruleId": "OPS-004",
+    "name": "Search could not be verified",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "UNABLE_TO_VERIFY"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "status",
+      "op": "eq",
+      "value": "UNABLE_TO_VERIFY"
+    },
+    "title": "Verification could not be completed",
+    "explanationTemplate": "{searchType} could not be verified, so the related claims remain unconfirmed."
+  },
+  {
+    "ruleId": "OPS-005",
+    "name": "Low match confidence",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "COMPLETED"
+    ],
+    "severity": "LOW",
+    "condition": {
+      "field": "matchConfidence",
+      "op": "lt",
+      "value": "$param.minMatchConfidence"
+    },
+    "title": "Low-confidence match",
+    "explanationTemplate": "{searchType} match confidence is {matchConfidence} (minimum {param.minMatchConfidence}); the record may belong to a different person or be missed."
+  },
+  {
+    "ruleId": "OPS-006",
+    "name": "Stale verification result",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "COMPLETED"
+    ],
+    "severity": "LOW",
+    "condition": {
+      "field": "meta.reportAgeDays",
+      "op": "gt",
+      "value": "$param.maxReportAgeDays"
+    },
+    "title": "Verification result is stale",
+    "explanationTemplate": "{searchType} was completed {meta.reportAgeDays} days ago (maximum {param.maxReportAgeDays} days). Consider refreshing it before the start date."
+  },
+  {
+    "ruleId": "OPS-007",
+    "name": "Source retries or failures",
+    "domain": "OPERATIONAL",
+    "scope": "PER_SEARCH",
+    "evaluateOn": [
+      "ORDERED",
+      "IN_PROGRESS",
+      "UNABLE_TO_VERIFY"
+    ],
+    "severity": "MEDIUM",
+    "condition": {
+      "field": "meta.retryCount",
+      "op": "gte",
+      "value": 3
+    },
+    "title": "Verification source keeps failing",
+    "explanationTemplate": "{searchType} has been retried {meta.retryCount} times without success (last error: {meta.errorCode})."
+  }
+]
+
+
+===== requirements.txt =====
+
+streamlit==1.40.2
+pymupdf==1.24.14
+requests==2.32.3
+python-dotenv==1.0.1
+numpy==2.1.3
+
+
+===== samples/redacted_candidate_report_example.json =====
+
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "orderId": "ORD-SAMPLE",
+    "application": {
+      "jobTitle": "Registered Nurse",
+      "jobState": "NJ",
+      "roleCategories": [
+        "HEALTHCARE"
+      ],
+      "daysToStart": 5
+    },
+    "coverage": {
+      "expected": [
+        "CRIMINAL",
+        "EDUCATION"
+      ],
+      "ordered": [
+        "CRIMINAL",
+        "EDUCATION"
+      ],
+      "completed": [
+        "CRIMINAL"
+      ],
+      "pending": [
+        "EDUCATION"
+      ],
+      "notOrdered": [],
+      "coveragePercent": 50
+    },
+    "searchTypes": [
+      {
+        "searchType": "SANCTIONS_WATCHLIST",
+        "expected": true,
+        "ordered": true,
+        "status": "COMPLETED",
+        "result": "RECORD_FOUND",
+        "matchConfidence": null,
+        "details": {
+          "listName": "OIG",
+          "matchType": "EXACT"
+        },
+        "rulesApplied": [],
+        "rulesSkipped": [],
+        "riskLevel": "HIGH",
+        "risks": []
+      }
+    ],
+    "risk": {
+      "integrity": {
+        "level": "HIGH"
+      },
+      "operational": {
+        "level": "LOW"
+      }
+    }
+  }
+}
+
+
+===== test_pdf.py =====
+
+
+import fitz
+
+pdf_path = "C:\\Users\\subha\\Downloads\\text_to_pdf_Imagetotext (1).pdf"
+
+doc = fitz.open(pdf_path)
+
+print("Total pages:", len(doc))
+
+for index, page in enumerate(doc, start=1):
+    print(f"\n========== PAGE {index} ==========")
+
+    text = page.get_text("text")
+
+    print("Extracted characters:", len(text))
+    print(text[:1500])
+
+
+===== tests/test_baseline.py =====
+
+import sys, unittest
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+from pipeline import load_catalog, load_reference_rules, validate_rule
+
+class BaselineCompatibilityTests(unittest.TestCase):
+    def test_all_47_reference_rules_validate(self):
+        catalog = load_catalog()
+        rules = load_reference_rules()
+        seen = set()
+        ids = {r["ruleId"] for r in rules}
+        errors = []
+        for rule in rules:
+            # Existing IDs are allowed when validating the baseline itself.
+            errors.extend(f"{rule.get('ruleId')}: {e}" for e in validate_rule(rule, catalog, set(), seen))
+        self.assertEqual(47, len(rules))
+        self.assertEqual([], errors)
+
+if __name__ == "__main__":
+    unittest.main()
